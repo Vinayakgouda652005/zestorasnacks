@@ -1,0 +1,6 @@
+{
+  "name": "ZESTORA - Nature's Crunch",
+  "description": "Premium naturally dehydrated fruit snacks e-commerce website with wholesome dried fruits, detailed product views, and seamless UPI ordering.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
