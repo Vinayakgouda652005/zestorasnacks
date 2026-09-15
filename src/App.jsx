@@ -9,6 +9,10 @@ import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { CartDrawer } from './components/CartDrawer';
 import { SearchModal } from './components/SearchModal';
+import { AuthModal } from './components/AuthModal';
+import { OrderTrackingModal } from './components/OrderTrackingModal';
+
+// Pages
 import { HomePage } from './pages/HomePage';
 import { ShopPage } from './pages/ShopPage';
 import { ProductDetailPage } from './pages/ProductDetailPage';
@@ -18,10 +22,24 @@ import { OrderConfirmationPage } from './pages/OrderConfirmationPage';
 import { StoryPage } from './pages/StoryPage';
 import { WhyZestoraPage } from './pages/WhyZestoraPage';
 import { ContactPage } from './pages/ContactPage';
+import { AccountPage } from './pages/AccountPage';
+import { WishlistPage } from './pages/WishlistPage';
+import { FAQPage } from './pages/FAQPage';
+import { PolicyPage } from './pages/PolicyPage';
+import { AdminPage } from './pages/AdminPage';
+
 import { Check } from 'lucide-react';
 
 const PageRenderer = () => {
-  const { currentPage, toastMessage } = useShop();
+  const {
+    currentPage,
+    toastMessage,
+    activeTrackingOrder,
+    isTrackingModalOpen,
+    closeOrderTracking
+  } = useShop();
+
+  const isAdminRoute = currentPage === 'admin' || currentPage === 'admin-login';
 
   const renderActivePage = () => {
     switch (currentPage) {
@@ -37,12 +55,29 @@ const PageRenderer = () => {
         return <CheckoutPage />;
       case 'order-confirmation':
         return <OrderConfirmationPage />;
+      case 'account':
+        return <AccountPage />;
+      case 'wishlist':
+        return <WishlistPage />;
+      case 'faq':
+        return <FAQPage />;
+      case 'privacy-policy':
+        return <PolicyPage policyType="privacy" />;
+      case 'terms':
+        return <PolicyPage policyType="terms" />;
+      case 'shipping-policy':
+        return <PolicyPage policyType="shipping" />;
+      case 'returns-policy':
+        return <PolicyPage policyType="returns" />;
       case 'story':
         return <StoryPage />;
       case 'why-zestora':
         return <WhyZestoraPage />;
       case 'contact':
         return <ContactPage />;
+      case 'admin':
+      case 'admin-login':
+        return <AdminPage />;
       default:
         return <HomePage />;
     }
@@ -55,7 +90,7 @@ const PageRenderer = () => {
         <div
           role="alert"
           aria-live="polite"
-          className="fixed bottom-6 right-6 z-50 bg-[#193826] text-[#FBF8F2] border border-[#255038] px-4 py-3 shadow-xl flex items-center space-x-2.5 text-xs animate-fade-in"
+          className="fixed bottom-6 right-6 z-50 bg-[#193826] text-[#FBF8F2] border border-[#255038] px-4 py-3 shadow-xl flex items-center space-x-2.5 text-xs animate-fade-in rounded-[2px]"
         >
           <div className="w-4 h-4 rounded-full bg-[#C5A869] text-[#193826] flex items-center justify-center shrink-0">
             <Check className="w-2.5 h-2.5 stroke-[3]" />
@@ -64,8 +99,8 @@ const PageRenderer = () => {
         </div>
       )}
 
-      {/* Persistent Global Header */}
-      <Header />
+      {/* Persistent Global Header (Hidden on Admin portal) */}
+      {!isAdminRoute && <Header />}
 
       {/* Dynamic Viewport */}
       <main className="flex-grow">
@@ -75,9 +110,15 @@ const PageRenderer = () => {
       {/* Global Interactive Elements */}
       <CartDrawer />
       <SearchModal />
+      <AuthModal />
+      <OrderTrackingModal
+        order={activeTrackingOrder}
+        isOpen={isTrackingModalOpen}
+        onClose={closeOrderTracking}
+      />
 
-      {/* Persistent Editorial Footer */}
-      <Footer />
+      {/* Persistent Editorial Footer (Hidden on Admin portal) */}
+      {!isAdminRoute && <Footer />}
     </div>
   );
 };

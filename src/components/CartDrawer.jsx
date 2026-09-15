@@ -113,8 +113,8 @@ export const CartDrawer = () => {
                 className="flex items-start gap-4 pb-4 border-b border-[#E8DDCD]/80"
               >
                 <img
-                  src={item.product.images.thumbnail}
-                  alt={item.product.name}
+                  src={item.product?.images?.thumbnail || item.product?.images?.main || item.product?.image || '/assets/products/dried-mango.png'}
+                  alt={item.product?.name || 'Product'}
                   referrerPolicy="no-referrer"
                   className="w-20 h-20 object-cover bg-[#F5EFEB] border border-[#E8DDCD] shrink-0"
                 />

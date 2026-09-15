@@ -110,8 +110,8 @@ export const CartPage = () => {
                   {/* Left: Image & Title */}
                   <div className="flex items-center space-x-4">
                     <img
-                      src={item.product.images.thumbnail}
-                      alt={item.product.name}
+                      src={item.product?.images?.thumbnail || item.product?.images?.main || item.product?.image || '/assets/products/dried-mango.png'}
+                      alt={item.product?.name || 'Product'}
                       referrerPolicy="no-referrer"
                       className="w-20 h-20 sm:w-24 sm:h-24 object-cover bg-[#F5EFEB] border border-[#E8DDCD] shrink-0"
                     />

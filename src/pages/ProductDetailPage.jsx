@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useShop } from '../context/ShopContext';
 import { ProductCard } from '../components/ProductCard';
 import { ReviewModal } from '../components/ReviewModal';
+import { reviewService } from '../services/reviewService';
 import {
   Star,
   Plus,
@@ -12,11 +13,28 @@ import {
   Leaf,
   FlaskConical,
   ShieldBan,
-  Heart
+  Heart,
+  ShieldCheck,
+  CheckCircle2,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export const ProductDetailPage = () => {
-  const { selectedProduct, products, addToCart, navigateTo, getProductReviews } = useShop();
+  const {
+    selectedProduct,
+    products,
+    addToCart,
+    navigateTo,
+    getProductReviews,
+    wishlist,
+    toggleWishlist,
+    user,
+    requireAuth
+  } = useShop();
+
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const isEligible = Boolean(user && reviewService.isEligibleToReview(user.id, user.email, selectedProduct?.id));
+  const alreadyReviewed = Boolean(user && reviewService.hasUserReviewedOrderProduct(user.id, user.email, selectedProduct?.id));
 
   if (!selectedProduct) {
     return (
@@ -36,8 +54,11 @@ export const ProductDetailPage = () => {
 
   // Gallery state
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const galleryImages = selectedProduct.images.gallery || [selectedProduct.images.main];
-  const currentImage = galleryImages[selectedImageIndex] || selectedProduct.images.main;
+  const mainImage = selectedProduct.image || selectedProduct.images?.main || selectedProduct.images?.thumbnail || '/assets/products/dried-mango.png';
+  const galleryImages = (Array.isArray(selectedProduct.images?.gallery) && selectedProduct.images.gallery.length > 0)
+    ? selectedProduct.images.gallery
+    : [mainImage];
+  const currentImage = galleryImages[selectedImageIndex] || mainImage;
 
   // Quantity state
   const [quantity, setQuantity] = useState(1);
@@ -48,9 +69,6 @@ export const ProductDetailPage = () => {
     nutrition: false,
     shipping: false
   });
-
-  // Review modal state
-  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
   // Reviews for this specific product
   const productReviews = getProductReviews(selectedProduct.id);
@@ -224,6 +242,24 @@ export const ProductDetailPage = () => {
               >
                 <ShoppingCart className="w-4 h-4" />
                 <span>Add to Cart</span>
+              </button>
+
+              <button
+                id="pdp-wishlist-toggle-btn"
+                type="button"
+                onClick={() => toggleWishlist(selectedProduct.id)}
+                className={`w-11 h-11 border border-[#E8DDCD] flex items-center justify-center transition-colors rounded-[2px] cursor-pointer ${
+                  wishlist.includes(selectedProduct.id)
+                    ? 'bg-red-50 text-red-600 border-red-200'
+                    : 'bg-[#FAF7F2] text-[#193826] hover:bg-[#F0EBE1]'
+                }`}
+                title={wishlist.includes(selectedProduct.id) ? 'Remove from Wishlist' : 'Add to Wishlist'}
+              >
+                <Heart
+                  className={`w-4 h-4 ${
+                    wishlist.includes(selectedProduct.id) ? 'fill-red-600' : ''
+                  }`}
+                />
               </button>
             </div>
 
@@ -455,7 +491,7 @@ export const ProductDetailPage = () => {
             Heading: Loved by Many
             Subtitle: Real stories. Real smiles.
             Right side: Write a Review button
-            Below: Three review cards belonging to the current product
+            Below: Rating breakdown + review cards belonging to the current product
             ================================================== */}
         <section className="py-14 sm:py-16" id="loved-by-many-reviews">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 pb-3 border-b border-[#E8DDCD]/80 gap-4">
@@ -468,19 +504,91 @@ export const ProductDetailPage = () => {
               </p>
             </div>
 
-            <button
-              id="write-review-btn"
-              type="button"
-              onClick={() => setIsReviewModalOpen(true)}
-              className="px-5 py-2.5 bg-transparent border border-[#193826] text-[#193826] text-xs font-semibold hover:bg-[#193826] hover:text-white transition-colors rounded-[2px] cursor-pointer"
-            >
-              Write a Review
-            </button>
+            <div className="flex items-center gap-3">
+              {user && isEligible && !alreadyReviewed && (
+                <button
+                  id="write-review-btn"
+                  onClick={() => setIsReviewModalOpen(true)}
+                  className="px-4 py-2 bg-[#193826] text-[#FBF8F2] text-xs font-semibold uppercase tracking-wider rounded-[2px] hover:bg-[#12291C] flex items-center gap-1.5 transition-colors shadow-xs"
+                >
+                  <Star className="w-3.5 h-3.5 text-[#C5A869] fill-[#C5A869]" />
+                  <span>Write a Review</span>
+                </button>
+              )}
+
+              {user && alreadyReviewed && (
+                <span className="px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium rounded-[2px] flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Verified Purchase Reviewed</span>
+                </span>
+              )}
+
+              {user && !isEligible && (
+                <span className="text-[11px] text-[#193826]/70 italic bg-[#FAF7F2] border border-[#E8DDCD] px-3 py-1.5 rounded-[2px]">
+                  Verified reviews unlock after parcel delivery.
+                </span>
+              )}
+
+              {!user && (
+                <button
+                  onClick={() => requireAuth(() => {}, 'Sign in to write a verified review.')}
+                  className="text-xs text-[#193826] underline hover:text-[#C5A869] font-medium"
+                >
+                  Sign in to review verified purchase
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Three Review Cards */}
+          {/* Rating Summary Breakdown */}
+          {(() => {
+            const total = productReviews.length;
+            const avg = total > 0 ? (productReviews.reduce((sum, r) => sum + r.rating, 0) / total).toFixed(1) : '5.0';
+            const counts = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+            productReviews.forEach(r => { counts[r.rating] = (counts[r.rating] || 0) + 1; });
+
+            return (
+              <div className="mb-8 p-6 bg-[#FAF7F2] border border-[#E8DDCD] rounded-[2px] grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                <div className="md:col-span-4 text-center md:text-left space-y-1">
+                  <div className="flex items-baseline justify-center md:justify-start gap-2">
+                    <span className="font-serif text-4xl font-bold text-[#193826]">{avg}</span>
+                    <span className="text-xs text-[#193826]/60">out of 5</span>
+                  </div>
+                  <div className="flex items-center justify-center md:justify-start text-[#C5A869]">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} className={`w-4 h-4 ${i < Math.round(Number(avg)) ? 'fill-[#C5A869]' : 'text-gray-300'}`} />
+                    ))}
+                  </div>
+                  <p className="text-xs text-[#193826]/70">
+                    Based on {total} authentic customer {total === 1 ? 'review' : 'reviews'}
+                  </p>
+                </div>
+
+                <div className="md:col-span-8 space-y-1.5">
+                  {[5, 4, 3, 2, 1].map((st) => {
+                    const cnt = counts[st] || 0;
+                    const pct = total > 0 ? Math.round((cnt / total) * 100) : (st === 5 ? 100 : 0);
+                    return (
+                      <div key={st} className="flex items-center gap-3 text-xs">
+                        <span className="w-12 text-right text-[#193826]/70 font-medium">{st} star</span>
+                        <div className="flex-1 h-2 bg-[#E8DDCD]/60 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-[#193826] rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="w-10 text-xs text-[#193826]/60">{pct}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Review Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {productReviews.slice(0, 3).map((rev) => {
+            {productReviews.map((rev) => {
               const initial = rev.customerName.charAt(0).toUpperCase();
               return (
                 <div
@@ -488,19 +596,28 @@ export const ProductDetailPage = () => {
                   className="bg-white border border-[#E8DDCD] p-5 sm:p-6 flex flex-col justify-between space-y-4 rounded-[2px] shadow-2xs"
                 >
                   <div className="space-y-3">
-                    {/* Customer initials/avatar, Name, Date */}
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 rounded-full bg-[#EAE2D5] text-[#193826] font-bold text-xs flex items-center justify-center shrink-0">
-                        {initial}
+                    {/* Customer initials/avatar, Name, Date, Badge */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 rounded-full bg-[#EAE2D5] text-[#193826] font-bold text-xs flex items-center justify-center shrink-0">
+                          {initial}
+                        </div>
+                        <div>
+                          <h4 className="font-sans font-bold text-xs text-[#193826]">
+                            {rev.customerName}
+                          </h4>
+                          <span className="text-[10px] text-[#193826]/50 block">
+                            {rev.reviewDate}
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-sans font-bold text-xs text-[#193826]">
-                          {rev.customerName}
-                        </h4>
-                        <span className="text-[10px] text-[#193826]/50">
-                          {rev.reviewDate}
+
+                      {rev.verifiedBuyer && (
+                        <span className="inline-flex items-center gap-1 text-[9px] uppercase tracking-wider font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-[2px] shrink-0">
+                          <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                          <span>Verified</span>
                         </span>
-                      </div>
+                      )}
                     </div>
 
                     {/* Star rating */}
@@ -519,6 +636,19 @@ export const ProductDetailPage = () => {
                     <p className="text-xs text-[#193826]/80 leading-relaxed italic">
                       "{rev.reviewText}"
                     </p>
+
+                    {/* Review Image (if customer provided photo) */}
+                    {rev.image && (
+                      <div className="pt-2">
+                        <div className="w-20 h-20 border border-[#E8DDCD] rounded-[2px] overflow-hidden bg-[#FAF7F2]">
+                          <img
+                            src={rev.image}
+                            alt="Customer upload"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -526,14 +656,14 @@ export const ProductDetailPage = () => {
           </div>
         </section>
 
-      </div>
+        {/* Review Modal for Verified Buyers */}
+        <ReviewModal
+          product={selectedProduct}
+          isOpen={isReviewModalOpen}
+          onClose={() => setIsReviewModalOpen(false)}
+        />
 
-      {/* Review Write Modal */}
-      <ReviewModal
-        product={selectedProduct}
-        isOpen={isReviewModalOpen}
-        onClose={() => setIsReviewModalOpen(false)}
-      />
+      </div>
     </div>
   );
 };

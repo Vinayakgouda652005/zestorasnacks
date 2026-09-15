@@ -16,13 +16,15 @@ export const SearchModal = () => {
 
   const queryClean = searchQuery.trim().toLowerCase();
   const filteredProducts = queryClean
-    ? products.filter(
-        (p) =>
-          p.name.toLowerCase().includes(queryClean) ||
-          p.tagline.toLowerCase().includes(queryClean) ||
-          p.description.toLowerCase().includes(queryClean) ||
-          p.tastingNotes.some((t) => t.toLowerCase().includes(queryClean))
-      )
+    ? products
+        .filter((p) => p.isActive !== false)
+        .filter(
+          (p) =>
+            p.name?.toLowerCase().includes(queryClean) ||
+            p.tagline?.toLowerCase().includes(queryClean) ||
+            p.description?.toLowerCase().includes(queryClean) ||
+            (Array.isArray(p.tastingNotes) && p.tastingNotes.some((t) => t.toLowerCase().includes(queryClean)))
+        )
     : [];
 
   const popularSearches = ['Mango', 'Pineapple', 'Guava', 'Banana', 'Bundles'];
@@ -108,7 +110,7 @@ export const SearchModal = () => {
                 >
                   <div className="flex items-center space-x-4">
                     <img
-                      src={prod.images.thumbnail}
+                      src={prod.images?.thumbnail || prod.images?.main || prod.image || '/assets/products/dried-mango.png'}
                       alt={prod.name}
                       referrerPolicy="no-referrer"
                       className="w-14 h-14 object-cover border border-[#E8DDCD]"

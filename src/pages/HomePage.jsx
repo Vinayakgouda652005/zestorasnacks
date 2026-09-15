@@ -103,10 +103,15 @@ export const HomePage = () => {
     touchStartX.current = null;
   };
 
-  // 4 primary single fruits for the collection display
-  const primaryProducts = products.filter(
-    (p) => ['dried-mango', 'dried-pineapple', 'dried-guava', 'dried-banana'].includes(p.slug)
+  // Active fruits for the collection display
+  const activeList = products.filter((p) => p.isActive !== false);
+  const preferredFeatured = activeList.filter((p) =>
+    ['dried-mango', 'dried-pineapple', 'dried-guava', 'dried-banana'].includes(p.slug)
   );
+  const others = activeList.filter((p) =>
+    !['dried-mango', 'dried-pineapple', 'dried-guava', 'dried-banana'].includes(p.slug)
+  );
+  const primaryProducts = [...preferredFeatured, ...others].slice(0, 4);
 
   return (
     <div className="bg-[#FAF7F2] text-[#193826]">

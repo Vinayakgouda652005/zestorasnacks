@@ -1,5 +1,11 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { INITIAL_PRODUCTS, INITIAL_REVIEWS } from '../data/products.js';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { productService } from '../services/productService';
+import { authService } from '../services/authService';
+import { orderService } from '../services/orderService';
+import { wishlistService } from '../services/wishlistService';
+import { addressService } from '../services/addressService';
+import { reviewService } from '../services/reviewService';
+import { notificationService } from '../services/notificationService';
 
 const FREE_SHIPPING_THRESHOLD = 499;
 const STANDARD_DELIVERY_FEE = 49;
@@ -7,34 +13,72 @@ const STANDARD_DELIVERY_FEE = 49;
 const ShopContext = createContext(undefined);
 
 export const ShopProvider = ({ children }) => {
-  const [products] = useState(INITIAL_PRODUCTS);
+  // Load products from productService (which supports admin additions/edits)
+  const [products, setProducts] = useState(() => productService.getProducts());
 
-  // Initialize route from URL hash or pathname
+  // Parse hash or pathname route
   const parseHashRoute = () => {
     const hash = window.location.hash.replace('#', '').trim();
     const pathname = window.location.pathname.trim();
     const routeStr = hash || (pathname !== '/' ? pathname : '');
 
-    if (!routeStr || routeStr === '/' || routeStr === 'home') return { page: 'home', slug: null };
+    if (!routeStr || routeStr === '/' || routeStr === 'home') return { page: 'home', slug: null, subtab: null };
     if (routeStr.startsWith('/product/')) {
       const slug = routeStr.replace('/product/', '').split('/')[0].split('?')[0].trim();
-      return { page: 'product-detail', slug };
+      return { page: 'product-detail', slug, subtab: null };
     }
-    if (routeStr === '/shop' || routeStr === 'shop') return { page: 'shop', slug: null };
-    if (routeStr === '/story' || routeStr === 'story' || routeStr === 'our-story') return { page: 'story', slug: null };
-    if (routeStr === '/why-zestora' || routeStr === 'why-zestora') return { page: 'why-zestora', slug: null };
-    if (routeStr === '/contact' || routeStr === 'contact') return { page: 'contact', slug: null };
-    if (routeStr === '/cart' || routeStr === 'cart') return { page: 'cart', slug: null };
-    if (routeStr === '/checkout' || routeStr === 'checkout') return { page: 'checkout', slug: null };
-    if (routeStr === '/order-confirmation' || routeStr === 'order-confirmation') return { page: 'order-confirmation', slug: null };
-    return { page: 'home', slug: null };
+    if (routeStr === '/shop' || routeStr === 'shop') return { page: 'shop', slug: null, subtab: null };
+    if (routeStr === '/story' || routeStr === 'story' || routeStr === 'our-story') return { page: 'story', slug: null, subtab: null };
+    if (routeStr === '/why-zestora' || routeStr === 'why-zestora') return { page: 'why-zestora', slug: null, subtab: null };
+    if (routeStr === '/contact' || routeStr === 'contact') return { page: 'contact', slug: null, subtab: null };
+    if (routeStr === '/cart' || routeStr === 'cart') return { page: 'cart', slug: null, subtab: null };
+    if (routeStr === '/checkout' || routeStr === 'checkout') return { page: 'checkout', slug: null, subtab: null };
+    if (routeStr === '/order-confirmation' || routeStr === 'order-confirmation') return { page: 'order-confirmation', slug: null, subtab: null };
+    
+    // New pages
+    if (routeStr === '/account' || routeStr === 'account' || routeStr === '/profile' || routeStr === 'profile') {
+      return { page: 'account', slug: null, subtab: 'profile' };
+    }
+    if (routeStr === '/orders' || routeStr === 'orders' || routeStr === '/my-orders') {
+      return { page: 'account', slug: null, subtab: 'orders' };
+    }
+    if (routeStr === '/wishlist' || routeStr === 'wishlist') return { page: 'wishlist', slug: null, subtab: null };
+    if (routeStr === '/faq' || routeStr === 'faq' || routeStr === '/faqs') return { page: 'faq', slug: null, subtab: null };
+    if (routeStr === '/privacy-policy' || routeStr === 'privacy-policy') return { page: 'privacy-policy', slug: null, subtab: null };
+    if (routeStr === '/terms' || routeStr === 'terms' || routeStr === '/terms-and-conditions') return { page: 'terms', slug: null, subtab: null };
+    if (routeStr === '/shipping-policy' || routeStr === 'shipping-policy') return { page: 'shipping-policy', slug: null, subtab: null };
+    if (routeStr === '/returns-policy' || routeStr === 'returns-policy' || routeStr === '/refund-policy') return { page: 'returns-policy', slug: null, subtab: null };
+
+    // Admin routes
+    if (routeStr.startsWith('/admin') || routeStr.startsWith('admin')) {
+      if (routeStr === '/admin/login' || routeStr === 'admin/login') {
+        return { page: 'admin-login', slug: null, subtab: null };
+      }
+      const parts = routeStr.replace('/admin', '').replace('admin', '').replace(/^\//, '').split('/');
+      const subtab = parts[0] || 'overview';
+      return { page: 'admin', slug: null, subtab };
+    }
+
+    return { page: 'home', slug: null, subtab: null };
   };
 
   const initialRoute = parseHashRoute();
   const [currentPage, setCurrentPage] = useState(initialRoute.page);
+  const [currentSubtab, setCurrentSubtab] = useState(initialRoute.subtab);
   const [selectedProductSlug, setSelectedProductSlug] = useState(
     initialRoute.slug || 'dried-mango'
   );
+
+  // Selected product lookup
+  const selectedProduct = products.find(p => p.slug === selectedProductSlug || p.id === selectedProductSlug) || products[0] || null;
+
+  // AUTH STATE
+  const [user, setUser] = useState(() => authService.getCurrentUser());
+  const [adminUser, setAdminUser] = useState(() => authService.getAdminUser());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState('login'); // 'login' | 'signup' | 'forgot'
+  const [authModalMessage, setAuthModalMessage] = useState(null);
+  const [pendingAuthAction, setPendingAuthAction] = useState(null);
 
   // Cart state persisted to localStorage
   const [cart, setCart] = useState(() => {
@@ -51,17 +95,23 @@ export const ShopProvider = ({ children }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [toastMessage, setToastMessage] = useState(null);
 
-  // Reviews persisted to localStorage
-  const [reviews, setReviews] = useState(() => {
-    try {
-      const saved = localStorage.getItem('zestora_reviews');
-      return saved ? JSON.parse(saved) : INITIAL_REVIEWS;
-    } catch {
-      return INITIAL_REVIEWS;
-    }
-  });
+  // Wishlist state
+  const [wishlist, setWishlist] = useState(() => wishlistService.getWishlist());
 
-  // Orders persisted to localStorage
+  // Addresses state
+  const [userAddresses, setUserAddresses] = useState(() => 
+    user ? addressService.getUserAddresses(user.id) : []
+  );
+
+  // User notifications
+  const [userNotifications, setUserNotifications] = useState(() =>
+    user ? notificationService.getUserNotifications(user.id) : []
+  );
+
+  // Reviews state (mapping of productId -> array of approved reviews)
+  const [reviewsMap, setReviewsMap] = useState(() => reviewService.getAllReviewsMap());
+
+  // Latest order
   const [latestOrder, setLatestOrder] = useState(() => {
     try {
       const saved = localStorage.getItem('zestora_latest_order');
@@ -71,11 +121,143 @@ export const ShopProvider = ({ children }) => {
     }
   });
 
+  // Order Tracking Modal State
+  const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
+  const [activeTrackingOrder, setActiveTrackingOrder] = useState(null);
+
+  const openOrderTracking = (orderIdOrOrder) => {
+    if (typeof orderIdOrOrder === 'object' && orderIdOrOrder !== null) {
+      setActiveTrackingOrder(orderIdOrOrder);
+      setIsTrackingModalOpen(true);
+    } else if (typeof orderIdOrOrder === 'string') {
+      const found = orderService.getById(orderIdOrOrder);
+      if (found) {
+        setActiveTrackingOrder(found);
+        setIsTrackingModalOpen(true);
+      } else {
+        showToast(`Order ${orderIdOrOrder} not found.`);
+      }
+    }
+  };
+
+  const closeOrderTracking = () => {
+    setIsTrackingModalOpen(false);
+    setActiveTrackingOrder(null);
+  };
+
+  const openAuthModal = (mode = 'login', message = null) => {
+    setAuthModalMode(mode);
+    setAuthModalMessage(message);
+    setIsAuthModalOpen(true);
+  };
+
+  const markNotificationAsRead = (id) => {
+    notificationService.markAsRead(id);
+    refreshNotifications();
+  };
+
+  const markAllNotificationsAsRead = () => {
+    notificationService.markAllAsRead(user?.id);
+    refreshNotifications();
+  };
+
+  // User orders
+  const [userOrders, setUserOrders] = useState(() =>
+    user ? orderService.getUserOrders(user.id, user.email) : []
+  );
+
+  // Refresh methods
+  const refreshProducts = useCallback(() => {
+    setProducts(productService.getProducts());
+  }, []);
+
+  const deleteProduct = useCallback((productId) => {
+    const res = productService.deleteProduct(productId);
+    if (res.success) {
+      setProducts(res.products);
+
+      // 1. Safely remove deleted product from cart
+      setCart(prev => {
+        const cleaned = prev.filter(item =>
+          item.product?.id !== productId &&
+          item.product?.slug !== productId &&
+          !item.id?.startsWith(`${productId}-`)
+        );
+        try {
+          localStorage.setItem('zestora_cart', JSON.stringify(cleaned));
+        } catch {
+          // ignore
+        }
+        return cleaned;
+      });
+
+      // 2. Safely remove from wishlist
+      wishlistService.removeFromWishlist(productId);
+      setWishlist(prev => prev.filter(id => id !== productId));
+
+      // 3. Fallback selectedProductSlug if needed
+      const remainingActive = res.products.filter(p => p.isActive !== false);
+      setSelectedProductSlug(prev => {
+        if (prev === productId || !remainingActive.some(p => p.slug === prev || p.id === prev)) {
+          return remainingActive.length > 0 ? remainingActive[0].slug : '';
+        }
+        return prev;
+      });
+    }
+    return res;
+  }, []);
+
+  const refreshWishlist = useCallback(() => {
+    setWishlist(wishlistService.getWishlist());
+  }, []);
+
+  const refreshAddresses = useCallback(() => {
+    if (user) {
+      setUserAddresses(addressService.getUserAddresses(user.id));
+    } else {
+      setUserAddresses([]);
+    }
+  }, [user]);
+
+  const refreshOrders = useCallback(() => {
+    if (user) {
+      setUserOrders(orderService.getUserOrders(user.id, user.email));
+    } else {
+      setUserOrders([]);
+    }
+  }, [user]);
+
+  const refreshNotifications = useCallback(() => {
+    if (user) {
+      setUserNotifications(notificationService.getUserNotifications(user.id));
+    } else {
+      setUserNotifications([]);
+    }
+  }, [user]);
+
+  const refreshReviews = useCallback(() => {
+    setReviewsMap(reviewService.getAllReviewsMap());
+  }, []);
+
+  // Update dependencies when user changes
+  useEffect(() => {
+    if (user) {
+      setUserAddresses(addressService.getUserAddresses(user.id));
+      setUserOrders(orderService.getUserOrders(user.id, user.email));
+      setUserNotifications(notificationService.getUserNotifications(user.id));
+    } else {
+      setUserAddresses([]);
+      setUserOrders([]);
+      setUserNotifications([]);
+    }
+  }, [user]);
+
   // Sync hash changes (e.g. browser Back / Forward buttons)
   useEffect(() => {
     const handleHashChange = () => {
       const route = parseHashRoute();
       setCurrentPage(route.page);
+      setCurrentSubtab(route.subtab);
       if (route.slug) {
         setSelectedProductSlug(route.slug);
       }
@@ -93,29 +275,25 @@ export const ShopProvider = ({ children }) => {
     }
   }, [cart]);
 
-  // Save reviews changes
-  useEffect(() => {
-    try {
-      localStorage.setItem('zestora_reviews', JSON.stringify(reviews));
-    } catch {
-      // Ignore storage errors
-    }
-  }, [reviews]);
-
-  const navigateTo = (page, productSlug) => {
+  const navigateTo = (page, param) => {
     setCurrentPage(page);
-    if (productSlug) {
-      setSelectedProductSlug(productSlug);
-      window.location.hash = `/product/${productSlug}`;
+    if (page === 'product-detail' && param) {
+      setSelectedProductSlug(param);
+      window.location.hash = `/product/${param}`;
     } else if (page === 'home') {
       window.location.hash = '';
+    } else if (page === 'admin') {
+      const sub = param || currentSubtab || 'overview';
+      setCurrentSubtab(sub);
+      window.location.hash = `/admin/${sub}`;
+    } else if (page === 'account' && param) {
+      setCurrentSubtab(param);
+      window.location.hash = `/account?tab=${param}`;
     } else {
       window.location.hash = `/${page}`;
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-
-  const selectedProduct = products.find(p => p.slug === selectedProductSlug) || products[0];
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -124,11 +302,103 @@ export const ShopProvider = ({ children }) => {
     }, 3000);
   };
 
+  // Auth gatekeeper
+  const requireAuth = (actionCallback, message = 'Please sign in to proceed.') => {
+    if (user) {
+      actionCallback();
+    } else {
+      setPendingAuthAction(() => actionCallback);
+      setAuthModalMessage(message);
+      setAuthModalMode('login');
+      setIsAuthModalOpen(true);
+    }
+  };
+
+  const handleLogin = (email, password) => {
+    const res = authService.login(email, password);
+    if (res.success) {
+      setUser(res.user);
+      setIsAuthModalOpen(false);
+      setAuthModalMessage(null);
+      showToast(`Welcome back, ${res.user.fullName}!`);
+      if (pendingAuthAction) {
+        const action = pendingAuthAction;
+        setPendingAuthAction(null);
+        setTimeout(() => action(), 100);
+      }
+    }
+    return res;
+  };
+
+  const handleSignup = (userData) => {
+    const res = authService.signup(userData);
+    if (res.success) {
+      setUser(res.user);
+      setIsAuthModalOpen(false);
+      setAuthModalMessage(null);
+      showToast(`Welcome to Zestora, ${res.user.fullName}!`);
+      if (pendingAuthAction) {
+        const action = pendingAuthAction;
+        setPendingAuthAction(null);
+        setTimeout(() => action(), 100);
+      }
+    }
+    return res;
+  };
+
+  const handleLogout = () => {
+    authService.logout();
+    setUser(null);
+    showToast('You have been logged out.');
+    if (currentPage === 'account') {
+      navigateTo('home');
+    }
+  };
+
+  const handleUpdateProfile = (updates) => {
+    const res = authService.updateProfile(updates);
+    if (res.success) {
+      setUser(res.user);
+      showToast('Profile details updated successfully.');
+    }
+    return res;
+  };
+
+  // Admin Auth
+  const handleAdminLogin = (email, password) => {
+    const res = authService.adminLogin(email, password);
+    if (res.success) {
+      setAdminUser(res.admin);
+      showToast('Admin access granted.');
+      navigateTo('admin', 'overview');
+    }
+    return res;
+  };
+
+  const handleAdminLogout = () => {
+    authService.adminLogout();
+    setAdminUser(null);
+    showToast('Admin logged out.');
+    navigateTo('home');
+  };
+
+  // Wishlist Actions
+  const toggleWishlist = (productId) => {
+    const res = wishlistService.toggleWishlist(productId);
+    refreshWishlist();
+    showToast(res.inWishlist ? 'Saved to your wishlist' : 'Removed from wishlist');
+    return res;
+  };
+
+  const isInWishlist = (productId) => {
+    return wishlist.includes(productId);
+  };
+
+  // Cart Actions
   const addToCart = (product, weightLabel, quantity = 1, openDrawer = true) => {
     const selectedWeight = weightLabel || product.defaultWeight;
-    const weightConfig = product.netWeights.find(w => w.label === selectedWeight) || product.netWeights[0];
+    const weightConfig = (product.netWeights || []).find(w => w.label === selectedWeight) || product.netWeights?.[0];
     const unitPrice = Math.round(product.price * (weightConfig ? weightConfig.priceMultiplier : 1));
-
     const itemKey = `${product.id}-${selectedWeight}`;
 
     setCart(prev => {
@@ -191,47 +461,64 @@ export const ShopProvider = ({ children }) => {
   const deliveryCharge = cartSubtotal >= FREE_SHIPPING_THRESHOLD || cartSubtotal === 0 ? 0 : STANDARD_DELIVERY_FEE;
   const cartTotal = cartSubtotal + deliveryCharge;
 
+  // Reviews helpers
   const getProductReviews = (productId) => {
-    return reviews[productId] || [];
+    return (reviewsMap[productId] || []).filter(r => r.status === 'approved');
   };
 
-  const addReview = (productId, name, rating, text) => {
-    const newRev = {
-      id: `rev-${Date.now()}`,
+  const addReview = (productId, name, rating, text, image = null, orderId = null) => {
+    const res = reviewService.addReview({
       productId,
       customerName: name,
+      userId: user?.id,
+      userEmail: user?.email,
       rating,
-      reviewDate: new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date()),
       reviewText: text,
-      verifiedBuyer: true
-    };
+      image,
+      orderId
+    });
 
-    setReviews(prev => ({
-      ...prev,
-      [productId]: [newRev, ...(prev[productId] || [])]
-    }));
-
-    showToast('Thank you! Your review has been published.');
+    if (res.success) {
+      refreshReviews();
+      refreshProducts();
+      showToast('Thank you! Your review has been submitted.');
+    }
+    return res;
   };
 
-  const createOrder = (customer, address, paymentMethod) => {
-    const orderNumber = Math.floor(10000 + Math.random() * 90000);
-    const newOrder = {
-      id: `ZST-${orderNumber}`,
-      date: new Date().toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric'
-      }),
-      items: [...cart],
+  // Order Placement
+  const createOrder = (customer, address, paymentMethod, upiRefNumber = '', upiScreenshotName = '') => {
+    // Take an immutable snapshot of items and product data so deleted catalog products never affect historical orders
+    const itemSnapshots = cart.map(item => ({
+      id: item.id,
+      selectedWeight: item.selectedWeight,
+      unitPrice: item.unitPrice,
+      quantity: item.quantity,
+      product: {
+        id: item.product?.id,
+        name: item.product?.name,
+        slug: item.product?.slug,
+        price: item.product?.price,
+        image: item.product?.image || item.product?.images?.main || item.product?.images?.thumbnail || '/assets/products/dried-mango.png',
+        images: {
+          main: item.product?.images?.main || item.product?.image || '/assets/products/dried-mango.png',
+          thumbnail: item.product?.images?.thumbnail || item.product?.images?.main || item.product?.image || '/assets/products/dried-mango.png'
+        }
+      }
+    }));
+
+    const newOrder = orderService.createOrder({
+      items: itemSnapshots,
       subtotal: cartSubtotal,
       deliveryCharge,
       total: cartTotal,
       customer,
       address,
       paymentMethod,
-      status: 'confirmed'
-    };
+      upiRefNumber,
+      upiScreenshotName,
+      userId: user?.id || null
+    });
 
     setLatestOrder(newOrder);
     try {
@@ -241,6 +528,8 @@ export const ShopProvider = ({ children }) => {
     }
 
     clearCart();
+    refreshOrders();
+    refreshNotifications();
     return newOrder;
   };
 
@@ -248,8 +537,11 @@ export const ShopProvider = ({ children }) => {
     <ShopContext.Provider
       value={{
         currentPage,
+        currentSubtab,
+        setCurrentSubtab,
         selectedProductSlug,
         products,
+        activeProducts: products.filter(p => p.isActive !== false),
         selectedProduct,
         navigateTo,
         cart,
@@ -268,13 +560,60 @@ export const ShopProvider = ({ children }) => {
         setIsSearchOpen,
         searchQuery,
         setSearchQuery,
-        reviews,
+        reviews: reviewsMap,
         getProductReviews,
         addReview,
         latestOrder,
         createOrder,
         toastMessage,
-        showToast
+        showToast,
+        // Auth state
+        user,
+        isAuthModalOpen,
+        setIsAuthModalOpen,
+        authModalMode,
+        setAuthModalMode,
+        authModalMessage,
+        setAuthModalMessage,
+        openAuthModal,
+        requireAuth,
+        handleLogin,
+        login: handleLogin,
+        handleSignup,
+        signup: handleSignup,
+        register: handleSignup,
+        handleLogout,
+        logout: handleLogout,
+        handleUpdateProfile,
+        // Wishlist
+        wishlist,
+        toggleWishlist,
+        isInWishlist,
+        refreshWishlist,
+        // Addresses
+        userAddresses,
+        refreshAddresses,
+        // Orders
+        userOrders,
+        refreshOrders,
+        isTrackingModalOpen,
+        setIsTrackingModalOpen,
+        activeTrackingOrder,
+        openOrderTracking,
+        closeOrderTracking,
+        // Notifications
+        userNotifications,
+        notifications: userNotifications,
+        refreshNotifications,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
+        // Admin & Products
+        adminUser,
+        handleAdminLogin,
+        handleAdminLogout,
+        refreshProducts,
+        deleteProduct,
+        refreshReviews
       }}
     >
       {children}

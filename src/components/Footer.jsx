@@ -1,18 +1,21 @@
 import React, { useState } from 'react';
 import { useShop } from '../context/ShopContext';
-import { Instagram, Heart, CheckCircle2 } from 'lucide-react';
+import { newsletterService } from '../services/newsletterService';
+import { Instagram, Heart, CheckCircle2, ShieldCheck, Lock } from 'lucide-react';
 import { Logo } from './Logo';
 
 export const Footer = () => {
-  const { navigateTo } = useShop();
+  const { navigateTo, showToast } = useShop();
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
 
   const handleSubscribe = (e) => {
     e.preventDefault();
     if (email.trim() && email.includes('@')) {
+      newsletterService.subscribe(email.trim(), 'Storefront Footer');
       setSubscribed(true);
       setEmail('');
+      showToast('Subscribed to Zestora Pantry updates!');
       setTimeout(() => setSubscribed(false), 5000);
     }
   };
@@ -34,7 +37,7 @@ export const Footer = () => {
             </div>
 
             <p className="text-xs sm:text-sm text-[#193826]/75 leading-relaxed max-w-sm">
-              Wholesome snacks for a healthier, happier tomorrow.
+              Wholesome snacks for a healthier, happier tomorrow. 100% natural, sun-dried tropical fruits from Indian orchards.
             </p>
 
             <div className="pt-2 flex items-center space-x-2 text-[#193826]/80">
@@ -107,42 +110,50 @@ export const Footer = () => {
                   Contact
                 </button>
               </li>
+              <li>
+                <button
+                  onClick={() => navigateTo('wishlist')}
+                  className="hover:text-[#193826] hover:underline transition-colors text-left"
+                >
+                  Saved Wishlist
+                </button>
+              </li>
             </ul>
           </div>
 
-          {/* Col 3: Help (3 cols) */}
+          {/* Col 3: Help & Policies (3 cols) */}
           <div className="lg:col-span-3">
             <h4 className="text-xs font-bold text-[#193826] mb-3 uppercase tracking-wider font-sans">
-              Help
+              Help & Policies
             </h4>
             <ul className="space-y-2 text-xs text-[#193826]/80 font-sans">
               <li>
                 <button
-                  onClick={() => navigateTo('contact')}
+                  onClick={() => navigateTo('faq')}
                   className="hover:text-[#193826] hover:underline transition-colors text-left"
                 >
-                  FAQs
+                  Frequently Asked Questions
                 </button>
               </li>
               <li>
                 <button
-                  onClick={() => navigateTo('contact')}
+                  onClick={() => navigateTo('shipping-policy')}
                   className="hover:text-[#193826] hover:underline transition-colors text-left"
                 >
-                  Shipping & Delivery
+                  Shipping & Delivery Policy
                 </button>
               </li>
               <li>
                 <button
-                  onClick={() => navigateTo('contact')}
+                  onClick={() => navigateTo('returns-policy')}
                   className="hover:text-[#193826] hover:underline transition-colors text-left"
                 >
-                  Returns & Refunds
+                  Returns & Refunds Guarantee
                 </button>
               </li>
               <li>
                 <button
-                  onClick={() => navigateTo('contact')}
+                  onClick={() => navigateTo('terms')}
                   className="hover:text-[#193826] hover:underline transition-colors text-left"
                 >
                   Terms & Conditions
@@ -150,7 +161,7 @@ export const Footer = () => {
               </li>
               <li>
                 <button
-                  onClick={() => navigateTo('contact')}
+                  onClick={() => navigateTo('privacy-policy')}
                   className="hover:text-[#193826] hover:underline transition-colors text-left"
                 >
                   Privacy Policy
@@ -165,13 +176,13 @@ export const Footer = () => {
               Join Our Community
             </h4>
             <p className="text-xs text-[#193826]/75 leading-relaxed font-sans">
-              Get exclusive offers, new launches and healthy living tips.
+              Get exclusive VIP offers, seasonal harvests, and healthy snacking updates.
             </p>
 
             {subscribed ? (
               <div className="bg-[#183424]/10 border border-[#183424]/20 p-2.5 text-xs text-[#193826] flex items-center space-x-2 rounded-[2px]">
                 <CheckCircle2 className="w-4 h-4 text-[#183424] shrink-0" />
-                <span>Thank you for subscribing!</span>
+                <span>Thank you for subscribing to Zestora!</span>
               </div>
             ) : (
               <form onSubmit={handleSubscribe} className="flex items-stretch mt-3 max-w-sm">
@@ -199,7 +210,18 @@ export const Footer = () => {
 
         {/* Bottom Bar */}
         <div className="pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-[#193826]/65 gap-2">
-          <p>© 2024 Zestora. All rights reserved.</p>
+          <div className="flex items-center gap-3">
+            <p>© 2024 Zestora. All rights reserved.</p>
+            <span className="text-[#193826]/30">•</span>
+            <button
+              onClick={() => navigateTo('admin')}
+              className="hover:text-[#193826] underline flex items-center gap-1 text-[11px]"
+            >
+              <Lock className="w-3 h-3 text-[#C5A869]" />
+              <span>Admin Portal</span>
+            </button>
+          </div>
+
           <p className="flex items-center gap-1">
             <span>Made with</span>
             <Heart className="w-3.5 h-3.5 fill-[#D26466] text-[#D26466] inline" />
