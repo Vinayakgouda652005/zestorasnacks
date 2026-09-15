@@ -1,22 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useShop } from '../context/ShopContext';
 import { ProductCard } from '../components/ProductCard';
 import { Sparkles, SlidersHorizontal } from 'lucide-react';
 
 export const ShopPage = () => {
-  const { products } = useShop();
+  const { products, refreshProducts } = useShop();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('featured');
 
+  // Ensure latest products are loaded from storage on mount
+  useEffect(() => {
+    if (refreshProducts) {
+      refreshProducts();
+    }
+  }, [refreshProducts]);
+
   const filteredProducts = products.filter((p) => {
     if (selectedCategory === 'all') return true;
+    if (selectedCategory === 'bundle' || selectedCategory === 'gift') {
+      return p.category === 'bundle' || p.category === 'gift';
+    }
     return p.category === selectedCategory;
   });
 
   const sortedProducts = [...filteredProducts].sort((a, b) => {
-    if (sortBy === 'price-asc') return a.price - b.price;
-    if (sortBy === 'price-desc') return b.price - a.price;
-    if (sortBy === 'rating') return b.rating - a.rating;
+    if (sortBy === 'price-asc') return (a.price || 0) - (b.price || 0);
+    if (sortBy === 'price-desc') return (b.price || 0) - (a.price || 0);
+    if (sortBy === 'rating') return (b.rating || 0) - (a.rating || 0);
     return 0; // featured default
   });
 

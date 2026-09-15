@@ -2,12 +2,17 @@
  * ZESTORA Product & Inventory Service
  */
 import { INITIAL_PRODUCTS } from '../data/products.js';
-import { getStorageItem, setStorageItem } from './storage';
+import { getStorageItem, setStorageItem } from './storage.js';
 
 const PRODUCTS_KEY = 'zestora_products';
 
+let _productsCache = null;
+
 export const productService = {
   getProducts() {
+    if (_productsCache && Array.isArray(_productsCache) && _productsCache.length > 0) {
+      return _productsCache;
+    }
     const stored = getStorageItem(PRODUCTS_KEY, null);
     if (!stored || !Array.isArray(stored) || stored.length === 0) {
       // Initialize with default stock property
@@ -20,8 +25,10 @@ export const productService = {
         shelfLife: p.shelfLife || '9 Months from packaging date'
       }));
       setStorageItem(PRODUCTS_KEY, initialized);
+      _productsCache = initialized;
       return initialized;
     }
+    _productsCache = stored;
     return stored;
   },
 
@@ -41,7 +48,12 @@ export const productService = {
 
   addProduct(productData) {
     const products = this.getProducts();
-    const slug = (productData.slug || productData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
+    const baseSlug = (productData.slug || (productData.name ? productData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '')).replace(/(^-|-$)/g, '') || `snack-${Date.now()}`;
+    let slug = baseSlug;
+    let counter = 1;
+    while (products.some(p => p.slug === slug)) {
+      slug = `${baseSlug}-${counter++}`;
+    }
     
     // Resolve primary and gallery images
     const mainImg = productData.image || productData.images?.main || productData.images?.thumbnail || '/assets/products/dried-mango.png';
@@ -50,17 +62,21 @@ export const productService = {
       ? productData.images.gallery
       : [mainImg];
 
+    // Normalize category (gift -> bundle so it matches shop filter)
+    const rawCategory = productData.category || 'single';
+    const category = rawCategory === 'gift' ? 'bundle' : rawCategory;
+
     const newProduct = {
       id: `prod-${Date.now()}`,
       slug,
       name: productData.name,
       tagline: productData.tagline || 'Naturally Sweet & Crunchy.',
-      description: productData.description || '',
+      description: productData.description || 'Slow dehydrated fruit with zero added sugar and zero preservatives.',
       price: Number(productData.price) || 199,
       originalPrice: Number(productData.originalPrice) || Math.round((Number(productData.price) || 199) * 1.25),
       rating: 5.0,
       reviewCount: 0,
-      category: productData.category || 'single',
+      category,
       netWeights: productData.netWeights || [{ label: '40g', weightGrams: 40, priceMultiplier: 1 }],
       defaultWeight: productData.defaultWeight || '40g',
       image: mainImg,
@@ -92,6 +108,7 @@ export const productService = {
     };
 
     const updated = [newProduct, ...products];
+    _productsCache = updated;
     setStorageItem(PRODUCTS_KEY, updated);
     return { success: true, product: newProduct, products: updated };
   },
@@ -104,9 +121,13 @@ export const productService = {
         const thumbImg = updates.images?.thumbnail || mainImg;
         const galleryImgs = updates.images?.gallery || p.images?.gallery || [mainImg];
 
+        const rawCategory = updates.category !== undefined ? updates.category : p.category;
+        const category = rawCategory === 'gift' ? 'bundle' : rawCategory;
+
         return {
           ...p,
           ...updates,
+          category,
           image: mainImg,
           images: {
             main: mainImg,
@@ -121,6 +142,7 @@ export const productService = {
       }
       return p;
     });
+    _productsCache = updated;
     setStorageItem(PRODUCTS_KEY, updated);
     return { success: true, products: updated };
   },
@@ -128,6 +150,7 @@ export const productService = {
   deleteProduct(id) {
     const products = this.getProducts();
     const updated = products.filter(p => p.id !== id && p.slug !== id);
+    _productsCache = updated;
     setStorageItem(PRODUCTS_KEY, updated);
     return { success: true, products: updated };
   },
@@ -135,6 +158,7 @@ export const productService = {
   toggleActive(id) {
     const products = this.getProducts();
     const updated = products.map(p => p.id === id ? { ...p, isActive: !p.isActive } : p);
+    _productsCache = updated;
     setStorageItem(PRODUCTS_KEY, updated);
     return { success: true, products: updated };
   },
@@ -148,7 +172,9 @@ export const productService = {
       }
       return p;
     });
+    _productsCache = updated;
     setStorageItem(PRODUCTS_KEY, updated);
     return { success: true, products: updated };
   }
 };
+

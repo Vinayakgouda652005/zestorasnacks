@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 
 export const AdminPage = () => {
-  const { user, login, logout, showToast, navigateTo, products, refreshProducts, deleteProduct } = useShop();
+  const { user, login, logout, showToast, navigateTo, products, refreshProducts, addProduct, updateProduct, deleteProduct } = useShop();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [stats, setStats] = useState(() => adminService.getDashboardStats());
@@ -239,8 +239,8 @@ export const AdminPage = () => {
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          // Scale to max 900x900 to ensure crystal-clear visual quality while keeping storage < 80KB
-          const MAX_SIZE = 900;
+          // Scale to max 600x600 for sharp retina display while keeping storage < 35KB
+          const MAX_SIZE = 600;
           let { width, height } = img;
           if (width > height) {
             if (width > MAX_SIZE) {
@@ -260,9 +260,8 @@ export const AdminPage = () => {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
 
-          const isPng = file.type === 'image/png';
-          const outputType = isPng ? 'image/png' : 'image/jpeg';
-          const dataUrl = canvas.toDataURL(outputType, 0.88);
+          // Always compress to JPEG at 0.78 quality to guarantee tiny footprint (<35KB) and avoid quota issues
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
           resolve(dataUrl);
         };
         img.onerror = () => reject(new Error('Failed to load image.'));
@@ -409,10 +408,18 @@ export const AdminPage = () => {
     };
 
     if (editingProduct) {
-      productService.updateProduct(editingProduct.id, payload);
+      if (updateProduct) {
+        updateProduct(editingProduct.id, payload);
+      } else {
+        productService.updateProduct(editingProduct.id, payload);
+      }
       showToast(`Product "${productForm.name}" updated successfully.`);
     } else {
-      productService.addProduct(payload);
+      if (addProduct) {
+        addProduct(payload);
+      } else {
+        productService.addProduct(payload);
+      }
       showToast(`Product "${productForm.name}" added to catalog.`);
     }
 
@@ -1650,6 +1657,30 @@ export const AdminPage = () => {
                     >
                       Choose Image File
                     </button>
+
+                    <div className="mt-3.5 pt-3 border-t border-[#E8DDCD] flex items-center gap-2 text-left" onClick={(e) => e.stopPropagation()}>
+                      <span className="text-[10px] uppercase font-semibold text-[#193826]/70 shrink-0">Or Image URL:</span>
+                      <input
+                        type="url"
+                        placeholder="https://... (or /assets/products/...)"
+                        value={productForm.image && !productForm.image.startsWith('data:') ? productForm.image : ''}
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          setProductForm(prev => ({
+                            ...prev,
+                            image: val,
+                            images: {
+                              ...prev.images,
+                              main: val,
+                              thumbnail: val,
+                              gallery: val ? [val] : []
+                            }
+                          }));
+                          if (val) setImageError('');
+                        }}
+                        className="flex-1 bg-[#FFFFFF] border border-[#E8DDCD] px-2.5 py-1 text-xs text-[#193826] rounded-[2px]"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -1742,7 +1773,7 @@ export const AdminPage = () => {
                   >
                     <option value="single">Single Origin Fruit</option>
                     <option value="chips">Crispy Fruit Chips</option>
-                    <option value="gift">Gift Box / Hamper</option>
+                    <option value="bundle">Tasting Gift Boxes & Hampers</option>
                   </select>
                 </div>
 

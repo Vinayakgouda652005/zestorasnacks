@@ -171,6 +171,22 @@ export const ShopProvider = ({ children }) => {
     setProducts(productService.getProducts());
   }, []);
 
+  const addProduct = useCallback((productData) => {
+    const res = productService.addProduct(productData);
+    if (res.success && res.products) {
+      setProducts(res.products);
+    }
+    return res;
+  }, []);
+
+  const updateProduct = useCallback((id, updates) => {
+    const res = productService.updateProduct(id, updates);
+    if (res.success && res.products) {
+      setProducts(res.products);
+    }
+    return res;
+  }, []);
+
   const deleteProduct = useCallback((productId) => {
     const res = productService.deleteProduct(productId);
     if (res.success) {
@@ -265,6 +281,17 @@ export const ShopProvider = ({ children }) => {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  // Listen to cross-tab/window storage changes to keep products in sync
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (!e || e.key === 'zestora_products' || !e.key) {
+        refreshProducts();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [refreshProducts]);
 
   // Save cart changes
   useEffect(() => {
@@ -612,6 +639,8 @@ export const ShopProvider = ({ children }) => {
         handleAdminLogin,
         handleAdminLogout,
         refreshProducts,
+        addProduct,
+        updateProduct,
         deleteProduct,
         refreshReviews
       }}
