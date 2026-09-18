@@ -6,6 +6,12 @@ import { wishlistService } from '../services/wishlistService';
 import { addressService } from '../services/addressService';
 import { reviewService } from '../services/reviewService';
 import { notificationService } from '../services/notificationService';
+import {
+  isSupabaseConfigured,
+  testSupabaseConnection,
+  seedInitialDataToSupabase,
+  getSupabase
+} from '../lib/supabase';
 
 const FREE_SHIPPING_THRESHOLD = 499;
 const STANDARD_DELIVERY_FEE = 49;
@@ -261,12 +267,55 @@ export const ShopProvider = ({ children }) => {
       setUserAddresses(addressService.getUserAddresses(user.id));
       setUserOrders(orderService.getUserOrders(user.id, user.email));
       setUserNotifications(notificationService.getUserNotifications(user.id));
+
+      if (isSupabaseConfigured()) {
+        addressService.fetchUserAddresses(user.id).then(addrs => {
+          if (addrs) setUserAddresses(addrs);
+        });
+        orderService.fetchFromDatabase(user.id).then(userOrds => {
+          if (userOrds) setUserOrders(userOrds);
+        });
+        wishlistService.fetchUserWishlist(user.id).then(w => {
+          if (w) setWishlist(w);
+        });
+        notificationService.fetchUserNotifications(user.id).then(n => {
+          if (n) setUserNotifications(n);
+        });
+      }
     } else {
       setUserAddresses([]);
       setUserOrders([]);
       setUserNotifications([]);
     }
   }, [user]);
+
+  // Initial Supabase database synchronization & auth state listening
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      productService.fetchFromDatabase().then(fetched => {
+        if (fetched && fetched.length > 0) {
+          setProducts(fetched);
+        }
+      });
+      reviewService.fetchFromDatabase().then(revs => {
+        if (revs) {
+          setReviewsMap(revs);
+        }
+      });
+    }
+
+    const unsubscribe = authService.subscribeToAuthChanges((updatedUser) => {
+      if (updatedUser) {
+        setUser(updatedUser);
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, []);
 
   // Sync hash changes (e.g. browser Back / Forward buttons)
   useEffect(() => {
@@ -341,8 +390,8 @@ export const ShopProvider = ({ children }) => {
     }
   };
 
-  const handleLogin = (email, password) => {
-    const res = authService.login(email, password);
+  const handleLogin = async (email, password) => {
+    const res = await authService.login(email, password);
     if (res.success) {
       setUser(res.user);
       setIsAuthModalOpen(false);
@@ -357,8 +406,8 @@ export const ShopProvider = ({ children }) => {
     return res;
   };
 
-  const handleSignup = (userData) => {
-    const res = authService.signup(userData);
+  const handleSignup = async (userData) => {
+    const res = await authService.signup(userData);
     if (res.success) {
       setUser(res.user);
       setIsAuthModalOpen(false);
@@ -373,8 +422,8 @@ export const ShopProvider = ({ children }) => {
     return res;
   };
 
-  const handleLogout = () => {
-    authService.logout();
+  const handleLogout = async () => {
+    await authService.logout();
     setUser(null);
     showToast('You have been logged out.');
     if (currentPage === 'account') {
@@ -382,8 +431,8 @@ export const ShopProvider = ({ children }) => {
     }
   };
 
-  const handleUpdateProfile = (updates) => {
-    const res = authService.updateProfile(updates);
+  const handleUpdateProfile = async (updates) => {
+    const res = await authService.updateProfile(updates);
     if (res.success) {
       setUser(res.user);
       showToast('Profile details updated successfully.');
@@ -392,8 +441,8 @@ export const ShopProvider = ({ children }) => {
   };
 
   // Admin Auth
-  const handleAdminLogin = (email, password) => {
-    const res = authService.adminLogin(email, password);
+  const handleAdminLogin = async (email, password) => {
+    const res = await authService.adminLogin(email, password);
     if (res.success) {
       setAdminUser(res.admin);
       showToast('Admin access granted.');
@@ -402,8 +451,8 @@ export const ShopProvider = ({ children }) => {
     return res;
   };
 
-  const handleAdminLogout = () => {
-    authService.adminLogout();
+  const handleAdminLogout = async () => {
+    await authService.adminLogout();
     setAdminUser(null);
     showToast('Admin logged out.');
     navigateTo('home');
@@ -411,7 +460,7 @@ export const ShopProvider = ({ children }) => {
 
   // Wishlist Actions
   const toggleWishlist = (productId) => {
-    const res = wishlistService.toggleWishlist(productId);
+    const res = wishlistService.toggleWishlist(productId, user?.id);
     refreshWishlist();
     showToast(res.inWishlist ? 'Saved to your wishlist' : 'Removed from wishlist');
     return res;
@@ -642,7 +691,11 @@ export const ShopProvider = ({ children }) => {
         addProduct,
         updateProduct,
         deleteProduct,
-        refreshReviews
+        refreshReviews,
+        // Supabase Database Status & Tools
+        isSupabaseConfigured,
+        testSupabaseConnection,
+        seedInitialDataToSupabase
       }}
     >
       {children}

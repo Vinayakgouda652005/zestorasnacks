@@ -38,8 +38,17 @@ import {
   Lock,
   Upload,
   AlertCircle,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Database
 } from 'lucide-react';
+import {
+  isSupabaseConfigured,
+  testSupabaseConnection,
+  seedInitialDataToSupabase,
+  uploadProductImage,
+  getSupabaseConfig,
+  saveCustomSupabaseConfig
+} from '../lib/supabase';
 
 export const AdminPage = () => {
   const { user, login, logout, showToast, navigateTo, products, refreshProducts, addProduct, updateProduct, deleteProduct } = useShop();
@@ -100,7 +109,76 @@ export const AdminPage = () => {
   const [adminPassword, setAdminPassword] = useState('admin123');
   const [adminError, setAdminError] = useState('');
 
-  const refreshAllData = () => {
+  // Database Tab State
+  const [dbConfig, setDbConfig] = useState(() => getSupabaseConfig());
+  const [dbTestResult, setDbTestResult] = useState(null);
+  const [isTestingDb, setIsTestingDb] = useState(false);
+  const [isSeedingDb, setIsSeedingDb] = useState(false);
+  const [seedResult, setSeedResult] = useState(null);
+  const [customUrl, setCustomUrl] = useState(() => getSupabaseConfig().url || '');
+  const [customKey, setCustomKey] = useState(() => getSupabaseConfig().anonKey || '');
+
+  const handleTestDatabaseConnection = async () => {
+    setIsTestingDb(true);
+    setDbTestResult(null);
+    try {
+      const res = await testSupabaseConnection();
+      setDbTestResult(res);
+      if (res.success) {
+        showToast(`Connected to Supabase PostgreSQL! Latency: ${res.latencyMs}ms`);
+      } else {
+        showToast('Connection failed: ' + (res.error || 'Check credentials'));
+      }
+    } catch (err) {
+      setDbTestResult({ success: false, error: err.message });
+      showToast('Connection error: ' + err.message);
+    } finally {
+      setIsTestingDb(false);
+    }
+  };
+
+  const handleSeedDatabase = async () => {
+    setIsSeedingDb(true);
+    setSeedResult(null);
+    try {
+      const res = await seedInitialDataToSupabase();
+      setSeedResult(res);
+      if (res.success) {
+        showToast('Successfully synchronized catalog and reviews to Supabase!');
+        refreshAllData();
+      } else {
+        showToast('Sync notice: ' + (res.error || 'Check database permissions'));
+      }
+    } catch (err) {
+      setSeedResult({ success: false, error: err.message });
+      showToast('Sync error: ' + err.message);
+    } finally {
+      setIsSeedingDb(false);
+    }
+  };
+
+  const handleSaveCustomCredentials = (e) => {
+    e.preventDefault();
+    saveCustomSupabaseConfig(customUrl.trim(), customKey.trim());
+    setDbConfig(getSupabaseConfig());
+    showToast('Supabase credentials saved.');
+    handleTestDatabaseConnection();
+  };
+
+  const refreshAllData = async () => {
+    if (isSupabaseConfigured()) {
+      try {
+        await Promise.allSettled([
+          orderService.fetchFromDatabase(),
+          reviewService.fetchFromDatabase(),
+          contactService.fetchFromDatabase(),
+          newsletterService.fetchFromDatabase(),
+          productService.fetchFromDatabase()
+        ]);
+      } catch (err) {
+        console.warn('Error refreshing live data from Supabase:', err);
+      }
+    }
     setStats(adminService.getDashboardStats());
     setOrders(orderService.getAll());
     setCustomers(adminService.getCustomersWithStats());
@@ -115,27 +193,31 @@ export const AdminPage = () => {
   }, []);
 
   // Quick Admin Login
-  const handleAdminLogin = (e) => {
+  const handleAdminLogin = async (e) => {
     e?.preventDefault();
     setAdminError('');
-    const res = login(adminEmail, adminPassword);
-    if (!res.success) {
-      // If user doesn't exist, create admin and login
-      const regRes = authService.register({
-        fullName: 'Zestora Store Administrator',
-        email: adminEmail,
-        password: adminPassword,
-        phone: '9880882476',
-        role: 'admin'
-      });
-      if (regRes.success) {
-        login(adminEmail, adminPassword);
-        showToast('Logged in as Zestora Administrator');
+    try {
+      const res = await login(adminEmail, adminPassword);
+      if (!res.success) {
+        // If user doesn't exist, create admin and login
+        const regRes = await authService.register({
+          fullName: 'Zestora Store Administrator',
+          email: adminEmail,
+          password: adminPassword,
+          phone: '9880882476',
+          role: 'admin'
+        });
+        if (regRes.success) {
+          await login(adminEmail, adminPassword);
+          showToast('Logged in as Zestora Administrator');
+        } else {
+          setAdminError(res.error || 'Invalid credentials');
+        }
       } else {
-        setAdminError(res.error || 'Invalid credentials');
+        showToast('Welcome to Zestora Administration Console');
       }
-    } else {
-      showToast('Welcome to Zestora Administration Console');
+    } catch (err) {
+      setAdminError(err.message || 'Authentication error');
     }
   };
 
@@ -227,14 +309,24 @@ export const AdminPage = () => {
     }
   };
 
-  // Helper to resize and convert uploaded image file to lightweight Data URL
-  const processImageFile = (file) => {
-    return new Promise((resolve, reject) => {
-      if (!file) return reject(new Error('No file provided'));
-      if (!file.type.startsWith('image/')) {
-        return reject(new Error('Only JPG, PNG, and WEBP image files are allowed.'));
+  // Helper to resize and convert uploaded image file to lightweight Data URL or upload to Supabase Storage
+  const processImageFile = async (file) => {
+    if (!file) throw new Error('No file provided');
+    if (!file.type.startsWith('image/')) {
+      throw new Error('Only JPG, PNG, and WEBP image files are allowed.');
+    }
+
+    // Direct upload to Supabase Storage if configured
+    if (isSupabaseConfigured()) {
+      try {
+        const publicUrl = await uploadProductImage(file);
+        if (publicUrl) return publicUrl;
+      } catch (err) {
+        console.warn('Supabase storage upload failed, falling back to local canvas optimization:', err);
       }
-      
+    }
+
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const img = new Image();
@@ -565,7 +657,8 @@ export const AdminPage = () => {
             { id: 'customers', label: `Customers (${customers.length})`, icon: Users },
             { id: 'reviews', label: `Reviews (${reviews.length})`, icon: Star },
             { id: 'messages', label: `Messages (${messages.length})`, icon: Mail },
-            { id: 'newsletter', label: `Subscribers (${subscribers.length})`, icon: Newspaper }
+            { id: 'newsletter', label: `Subscribers (${subscribers.length})`, icon: Newspaper },
+            { id: 'database', label: 'Database & Sync', icon: Database }
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1365,6 +1458,260 @@ export const AdminPage = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* =========================================================
+            TAB 9: DATABASE & SUPABASE SYNCHRONIZATION
+            ========================================================= */}
+        {activeTab === 'database' && (
+          <div className="space-y-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <span className="text-xs uppercase tracking-wider text-[#C5A869] font-semibold block">
+                  Backend Infrastructure
+                </span>
+                <h2 className="font-serif text-2xl text-[#193826]">
+                  Supabase PostgreSQL & Cloud Storage
+                </h2>
+                <p className="text-xs text-[#193826]/70 mt-1">
+                  Manage real-time database connectivity, sync catalog products, and monitor cloud tables.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleTestDatabaseConnection}
+                  disabled={isTestingDb}
+                  className="px-4 py-2.5 bg-[#FAF7F2] border border-[#E8DDCD] hover:bg-[#FFFFFF] text-[#193826] text-xs uppercase tracking-wider font-semibold rounded-[2px] transition-all flex items-center gap-2"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isTestingDb ? 'animate-spin' : ''}`} />
+                  <span>{isTestingDb ? 'Testing...' : 'Test Connection'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSeedDatabase}
+                  disabled={isSeedingDb}
+                  className="px-4 py-2.5 bg-[#193826] text-[#FBF8F2] hover:bg-[#12291C] text-xs uppercase tracking-wider font-semibold rounded-[2px] transition-all flex items-center gap-2 shadow-xs"
+                >
+                  <Upload className={`w-3.5 h-3.5 ${isSeedingDb ? 'animate-bounce' : ''}`} />
+                  <span>{isSeedingDb ? 'Syncing...' : 'Sync Catalog to Supabase'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Live Connection Status Banner */}
+            <div className={`p-5 rounded-[2px] border ${
+              isSupabaseConfigured()
+                ? 'bg-emerald-50/60 border-emerald-200'
+                : 'bg-amber-50/60 border-amber-200'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start sm:items-center gap-3">
+                  <div className={`w-3.5 h-3.5 rounded-full mt-0.5 sm:mt-0 ${
+                    isSupabaseConfigured() ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                  }`} />
+                  <div>
+                    <strong className="text-sm font-semibold text-[#193826] block">
+                      {isSupabaseConfigured()
+                        ? 'Connected to Supabase PostgreSQL Database'
+                        : 'Local Fallback Storage Active'}
+                    </strong>
+                    <p className="text-xs text-[#193826]/75 mt-0.5">
+                      {isSupabaseConfigured()
+                        ? `Project Endpoint: ${dbConfig.url} • Cloud persistence with Row Level Security is active.`
+                        : 'Operating in self-contained localStorage fallback mode. Enter your Supabase credentials below to connect to live PostgreSQL.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-xs font-mono text-[#193826]/80 px-3 py-1 bg-[#FFFFFF] border border-[#E8DDCD] rounded-[2px] shrink-0 self-start sm:self-center">
+                  Status: {isSupabaseConfigured() ? 'LIVE_CLOUD' : 'FALLBACK_LOCAL'}
+                </div>
+              </div>
+
+              {dbTestResult && (
+                <div className={`mt-4 p-3 rounded-[2px] text-xs border ${
+                  dbTestResult.success
+                    ? 'bg-emerald-100/70 border-emerald-300 text-emerald-900'
+                    : 'bg-red-50 border-red-200 text-red-800'
+                }`}>
+                  {dbTestResult.success ? (
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span>{dbTestResult.message} (Latency: {dbTestResult.latencyMs}ms)</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>{dbTestResult.error}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {seedResult && (
+                <div className={`mt-4 p-3 rounded-[2px] text-xs border ${
+                  seedResult.success
+                    ? 'bg-emerald-100/70 border-emerald-300 text-emerald-900'
+                    : 'bg-amber-100/70 border-amber-300 text-amber-900'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{seedResult.message}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2-Column Grid: Config Form & Database Tables */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Credentials Configuration Form */}
+              <div className="lg:col-span-5 bg-[#FAF7F2] border border-[#E8DDCD] p-6 rounded-[2px] space-y-4">
+                <div className="border-b border-[#E8DDCD] pb-3">
+                  <h3 className="font-serif text-lg text-[#193826]">
+                    Connection Credentials
+                  </h3>
+                  <p className="text-[11px] text-[#193826]/70 mt-0.5">
+                    Enter project credentials or configure via .env file.
+                  </p>
+                </div>
+
+                <form onSubmit={handleSaveCustomCredentials} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block uppercase tracking-wider font-semibold text-[#193826] mb-1">
+                      Project URL
+                    </label>
+                    <input
+                      type="url"
+                      placeholder="https://xyzcompany.supabase.co"
+                      value={customUrl}
+                      onChange={(e) => setCustomUrl(e.target.value)}
+                      className="w-full bg-[#FFFFFF] border border-[#E8DDCD] px-3.5 py-2.5 font-mono text-xs text-[#193826] rounded-[2px] focus:outline-none focus:border-[#193826]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block uppercase tracking-wider font-semibold text-[#193826] mb-1">
+                      Public Anonymous Key
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      value={customKey}
+                      onChange={(e) => setCustomKey(e.target.value)}
+                      className="w-full bg-[#FFFFFF] border border-[#E8DDCD] px-3.5 py-2.5 font-mono text-xs text-[#193826] rounded-[2px] focus:outline-none focus:border-[#193826]"
+                    />
+                    <span className="text-[10px] text-[#193826]/60 mt-1 block">
+                      Never enter your service-role secret key in browser code.
+                    </span>
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-between">
+                    <button
+                      type="submit"
+                      className="px-4 py-2.5 bg-[#193826] text-[#FBF8F2] text-xs uppercase tracking-wider font-semibold rounded-[2px] hover:bg-[#12291C] transition-all"
+                    >
+                      Save & Connect
+                    </button>
+                    {customUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          saveCustomSupabaseConfig('', '');
+                          setCustomUrl('');
+                          setCustomKey('');
+                          setDbConfig(getSupabaseConfig());
+                          showToast('Credentials cleared. Switched to fallback mode.');
+                        }}
+                        className="text-xs text-red-600 hover:underline"
+                      >
+                        Reset to Defaults
+                      </button>
+                    )}
+                  </div>
+                </form>
+
+                <div className="pt-4 border-t border-[#E8DDCD] space-y-2 text-[11px] text-[#193826]/70 leading-relaxed">
+                  <strong className="text-[#193826] block">Setup Guide</strong>
+                  <p>
+                    1. Create a Supabase project at <a href="https://supabase.com" target="_blank" rel="noreferrer" className="underline font-medium text-[#193826]">supabase.com</a>.
+                  </p>
+                  <p>
+                    2. Run the SQL schema from <code className="bg-[#E8DDCD]/60 px-1 py-0.5 rounded">supabase/schema.sql</code> in the Supabase SQL Editor.
+                  </p>
+                  <p>
+                    3. Paste your Project URL and anon public key above or set them in <code className="bg-[#E8DDCD]/60 px-1 py-0.5 rounded">.env</code>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Database Schema & Tables Monitor */}
+              <div className="lg:col-span-7 bg-[#FAF7F2] border border-[#E8DDCD] p-6 rounded-[2px] space-y-4">
+                <div className="border-b border-[#E8DDCD] pb-3 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-serif text-lg text-[#193826]">
+                      PostgreSQL Tables Architecture
+                    </h3>
+                    <p className="text-[11px] text-[#193826]/70 mt-0.5">
+                      12 relational tables with Row Level Security (RLS) enforcement.
+                    </p>
+                  </div>
+                  <span className="text-xs bg-[#E8DDCD]/60 px-2.5 py-1 rounded text-[#193826] font-mono">
+                    PostgreSQL 15
+                  </span>
+                </div>
+
+                <div className="divide-y divide-[#E8DDCD] text-xs">
+                  {[
+                    { table: 'products', desc: 'Catalog items, nutrition, weights, stock, and media', count: products.length, rls: 'Public Read, Admin Write' },
+                    { table: 'categories', desc: 'Product groups (single, blends, hampers)', count: 3, rls: 'Public Read, Admin Write' },
+                    { table: 'orders', desc: 'Customer transactions with subtotal, tax, and delivery', count: orders.length, rls: 'User Own, Admin All' },
+                    { table: 'order_items', desc: 'Immutable snapshot of purchased fruit products', count: 'Snapshot', rls: 'User Own, Admin All' },
+                    { table: 'payments', desc: 'Payment details, UPI UTR references, COD tracking', count: orders.length, rls: 'User Own, Admin All' },
+                    { table: 'order_timeline', desc: 'Status transition logs & Delhivery tracking info', count: 'Event Log', rls: 'Public by Tracking ID' },
+                    { table: 'reviews', desc: 'Customer ratings, feedback, verified purchase flags', count: reviews.length, rls: 'Public Approved, Admin All' },
+                    { table: 'profiles', desc: 'User accounts linked to Supabase Auth UID', count: customers.length, rls: 'User Own Profile' },
+                    { table: 'addresses', desc: 'Customer saved shipping addresses & default flag', count: 'Multiple', rls: 'User Own Addresses' },
+                    { table: 'wishlists', desc: 'Saved fruit favorites linked by user ID & product ID', count: 'Synced', rls: 'User Own Wishlist' },
+                    { table: 'notifications', desc: 'Real-time order delivery updates and notifications', count: 'Live', rls: 'User Own Alerts' },
+                    { table: 'contact_messages', desc: 'Inquiries, corporate bulk gifting requests', count: messages.length, rls: 'Public Insert, Admin Read' },
+                    { table: 'newsletter_subscribers', desc: 'Storefront email subscriber registry', count: subscribers.length, rls: 'Public Insert, Admin Read' }
+                  ].map((item, idx) => (
+                    <div key={idx} className="py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-semibold text-[#193826]">{item.table}</span>
+                          <span className="text-[10px] text-[#C5A869] font-medium bg-[#FFFFFF] px-1.5 py-0.5 rounded border border-[#E8DDCD]">
+                            {item.rls}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#193826]/70 truncate mt-0.5">
+                          {item.desc}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-mono text-xs font-semibold text-[#193826]">
+                          {item.count}
+                        </span>
+                        <span className="text-[10px] text-[#193826]/50 block">records</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-4 border-t border-[#E8DDCD] flex items-center justify-between text-xs text-[#193826]/80">
+                  <div className="flex items-center gap-2">
+                    <Boxes className="w-4 h-4 text-[#C5A869]" />
+                    <span>Supabase Storage Bucket: <code className="font-mono font-semibold">product-images</code></span>
+                  </div>
+                  <span className="text-[11px] text-emerald-700 font-medium">Public CDN Enabled</span>
+                </div>
+              </div>
+
             </div>
           </div>
         )}

@@ -1,8 +1,10 @@
 /**
  * ZESTORA Order Management & Tracking Service
+ * Integrates Supabase PostgreSQL tables: orders, order_items, payments, notifications.
  */
 import { getStorageItem, setStorageItem } from './storage';
 import { notificationService } from './notificationService';
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
 
 const ORDERS_KEY = 'zestora_orders';
 
@@ -184,7 +186,98 @@ export const orderService = {
     return this.getOrderById(id);
   },
 
-  createOrder({ items, subtotal, deliveryCharge, total, customer, address, paymentMethod, upiRefNumber, upiScreenshotName, userId }) {
+  /**
+   * Sync latest orders from Supabase database
+   */
+  async fetchFromDatabase(userId = null) {
+    const supabase = getSupabase();
+    if (!isSupabaseConfigured() || !supabase) {
+      return this.getAll();
+    }
+
+    try {
+      let query = supabase
+        .from('orders')
+        .select(`
+          *,
+          order_items (*)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.warn('Supabase fetch orders error:', error);
+        return this.getAll();
+      }
+
+      if (data && Array.isArray(data)) {
+        const formattedOrders = data.map(o => {
+          const items = (o.order_items || []).map(it => ({
+            id: `${it.product_id}-${it.weight}`,
+            product: {
+              id: it.product_id,
+              name: it.product_name,
+              slug: it.product_id,
+              price: Number(it.unit_price),
+              images: { thumbnail: it.product_image || '/assets/products/dried-mango.png' }
+            },
+            selectedWeight: it.weight,
+            unitPrice: Number(it.unit_price),
+            quantity: it.quantity
+          }));
+
+          return {
+            id: o.id,
+            orderNumber: o.order_number,
+            userId: o.user_id,
+            date: new Date(o.created_at).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            }),
+            createdAt: o.created_at,
+            customer: o.customer_info,
+            address: o.shipping_address,
+            items,
+            subtotal: Number(o.subtotal),
+            deliveryCharge: Number(o.shipping_charge),
+            total: Number(o.total),
+            paymentMethod: o.payment_method,
+            paymentStatus: o.payment_status,
+            status: o.order_status,
+            courierName: o.courier_name,
+            trackingNumber: o.tracking_number,
+            trackingUrl: o.tracking_url,
+            estimatedDelivery: o.estimated_delivery,
+            timeline: o.timeline || []
+          };
+        });
+
+        // Merge with local orders to ensure no local orders are lost
+        const local = this.getAll();
+        const mergedMap = new Map();
+        formattedOrders.forEach(o => mergedMap.set(o.id, o));
+        local.forEach(o => {
+          if (!mergedMap.has(o.id)) mergedMap.set(o.id, o);
+        });
+
+        const merged = Array.from(mergedMap.values());
+        setStorageItem(ORDERS_KEY, merged);
+        return merged;
+      }
+    } catch (err) {
+      console.warn('Error fetching orders from Supabase:', err);
+    }
+    return this.getAll();
+  },
+
+  createOrder({ items, subtotal, deliveryCharge, total, customer, address, paymentMethod, upiRefNumber, upiScreenshotName, upiScreenshotUrl, userId }) {
     const orderNumber = Math.floor(10000 + Math.random() * 90000);
     const dateStr = new Date().toLocaleDateString('en-IN', {
       day: 'numeric',
@@ -194,8 +287,9 @@ export const orderService = {
       minute: '2-digit'
     });
 
+    const orderId = `ZST-${orderNumber}`;
     const newOrder = {
-      id: `ZST-${orderNumber}`,
+      id: orderId,
       userId: userId || null,
       date: dateStr,
       createdAt: new Date().toISOString(),
@@ -209,6 +303,7 @@ export const orderService = {
       paymentStatus: paymentMethod === 'upi_qr' ? 'pending' : 'cod_pending',
       upiRefNumber: upiRefNumber || '',
       upiScreenshotName: upiScreenshotName || '',
+      upiScreenshotUrl: upiScreenshotUrl || '',
       status: 'confirmed',
       courierName: 'Delhivery Express',
       trackingNumber: `ZST${orderNumber}IN`,
@@ -227,6 +322,94 @@ export const orderService = {
     const all = this.getAll();
     const updated = [newOrder, ...all];
     setStorageItem(ORDERS_KEY, updated);
+
+    // Write to Supabase
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          // 1. Try atomic server-side validation & inventory deduction
+          const { data: rpcOrder, error: rpcErr } = await supabase.rpc('create_order_securely', {
+            p_order_id: newOrder.id,
+            p_items: items,
+            p_customer_info: customer,
+            p_shipping_address: address,
+            p_payment_method: paymentMethod,
+            p_shipping_charge: deliveryCharge,
+            p_upi_ref: upiRefNumber || null,
+            p_screenshot_url: upiScreenshotUrl || null
+          });
+
+          if (!rpcErr && rpcOrder) {
+            console.log('Order securely created and stock verified via Supabase RPC:', rpcOrder.id);
+            return;
+          }
+
+          // Fallback to direct table inserts if RPC not present in older migration
+          if (rpcErr) {
+            console.warn('RPC create_order_securely notice (falling back to direct insert):', rpcErr.message);
+          }
+
+          // 2. Insert order directly
+          await supabase.from('orders').insert({
+            id: newOrder.id,
+            order_number: `ORD-${orderNumber}`,
+            user_id: (userId && userId.length > 20) ? userId : null,
+            subtotal,
+            shipping_charge: deliveryCharge,
+            total,
+            payment_method: paymentMethod,
+            payment_status: newOrder.paymentStatus,
+            order_status: newOrder.status,
+            shipping_address: address,
+            customer_info: customer,
+            tracking_number: newOrder.trackingNumber,
+            courier_name: newOrder.courierName,
+            tracking_url: newOrder.trackingUrl,
+            estimated_delivery: newOrder.estimatedDelivery,
+            timeline: newOrder.timeline
+          });
+
+          // 3. Insert order items snapshots
+          const itemsPayload = items.map(item => ({
+            order_id: newOrder.id,
+            product_id: item.product?.id || item.id,
+            product_name: item.product?.name || 'Zestora Fruit Snack',
+            product_image: item.product?.images?.thumbnail || item.product?.image || '/assets/products/dried-mango.png',
+            quantity: item.quantity || 1,
+            weight: item.selectedWeight || '40g',
+            unit_price: item.unitPrice,
+            total_price: item.unitPrice * (item.quantity || 1)
+          }));
+
+          await supabase.from('order_items').insert(itemsPayload);
+
+          // 4. Deduct stock for each item in products table
+          for (const item of items) {
+            const prodId = item.product?.id || item.id;
+            const qty = item.quantity || 1;
+            const { data: prodData } = await supabase.from('products').select('stock').eq('id', prodId).single();
+            if (prodData && prodData.stock !== undefined) {
+              const newStock = Math.max(0, prodData.stock - qty);
+              await supabase.from('products').update({ stock: newStock }).eq('id', prodId);
+            }
+          }
+
+          // 5. Insert payment record
+          await supabase.from('payments').insert({
+            order_id: newOrder.id,
+            user_id: (userId && userId.length > 20) ? userId : null,
+            payment_method: paymentMethod,
+            amount: total,
+            status: newOrder.paymentStatus,
+            utr_number: upiRefNumber || null,
+            payment_screenshot_url: upiScreenshotUrl || null
+          });
+        } catch (err) {
+          console.warn('Supabase createOrder sync error:', err);
+        }
+      })();
+    }
 
     // Also notify customer
     notificationService.addNotification({
@@ -283,6 +466,28 @@ export const orderService = {
 
     setStorageItem(ORDERS_KEY, updated);
 
+    // Sync to Supabase
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          const updates = {
+            order_status: nextStatus,
+            courier_name: courier,
+            tracking_number: trackingNumber,
+            tracking_url: trackingUrl,
+            updated_at: new Date().toISOString()
+          };
+          if (nextStatus === 'delivered') {
+            updates.delivered_at = new Date().toISOString();
+          }
+          await supabase.from('orders').update(updates).eq('id', orderId);
+        } catch (err) {
+          console.warn('Supabase updateStatus error:', err);
+        }
+      })();
+    }
+
     // Notify customer
     if (target.userId) {
       notificationService.addNotification({
@@ -298,49 +503,7 @@ export const orderService = {
   },
 
   updateOrderStatus(orderId, nextStatus) {
-    const all = this.getAll();
-    const target = all.find(o => o.id === orderId);
-    if (!target) return { success: false, error: 'Order not found' };
-
-    const dateStr = new Date().toLocaleDateString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    const statusStep = ORDER_STATUS_STEPS.find(s => s.key === nextStatus);
-    const label = statusStep ? statusStep.label : nextStatus.replace(/_/g, ' ').toUpperCase();
-
-    const updated = all.map(o => {
-      if (o.id === orderId) {
-        const timeline = o.timeline || [];
-        // Append to timeline if not already there
-        const newTimeline = [...timeline, { status: nextStatus, date: dateStr, label }];
-        return {
-          ...o,
-          status: nextStatus,
-          timeline: newTimeline
-        };
-      }
-      return o;
-    });
-
-    setStorageItem(ORDERS_KEY, updated);
-
-    // Notify customer
-    if (target.userId) {
-      notificationService.addNotification({
-        userId: target.userId,
-        title: `Order Status Updated: ${label}`,
-        message: `Your order ${orderId} is now ${label.toLowerCase()}.`,
-        orderId,
-        type: 'order_status'
-      });
-    }
-
-    return { success: true, order: updated.find(o => o.id === orderId) };
+    return this.updateStatus(orderId, nextStatus);
   },
 
   updatePaymentStatus(orderId, paymentStatus) {
@@ -356,6 +519,19 @@ export const orderService = {
     });
 
     setStorageItem(ORDERS_KEY, updated);
+
+    // Sync to Supabase
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          await supabase.from('orders').update({ payment_status: paymentStatus }).eq('id', orderId);
+          await supabase.from('payments').update({ status: paymentStatus }).eq('order_id', orderId);
+        } catch (err) {
+          console.warn('Supabase updatePaymentStatus error:', err);
+        }
+      })();
+    }
 
     // Notify customer
     if (target.userId) {
@@ -393,6 +569,23 @@ export const orderService = {
     });
 
     setStorageItem(ORDERS_KEY, updated);
+
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          await supabase.from('orders').update({
+            courier_name: courierName,
+            tracking_number: trackingNumber,
+            tracking_url: trackingUrl,
+            estimated_delivery: estimatedDelivery
+          }).eq('id', orderId);
+        } catch (err) {
+          console.warn('Supabase updateTracking error:', err);
+        }
+      })();
+    }
+
     return { success: true };
   }
 };

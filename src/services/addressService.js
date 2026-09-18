@@ -1,7 +1,9 @@
 /**
  * ZESTORA Address Management Service
+ * Integrates Supabase PostgreSQL addresses table with local caching.
  */
 import { getStorageItem, setStorageItem } from './storage';
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
 
 const ADDRESSES_KEY = 'zestora_addresses';
 
@@ -38,6 +40,48 @@ export const addressService = {
     return all.filter(a => a.userId === userId);
   },
 
+  async fetchUserAddresses(userId) {
+    if (!userId) return [];
+    const supabase = getSupabase();
+    if (!isSupabaseConfigured() || !supabase) {
+      return this.getUserAddresses(userId);
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('addresses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('is_default', { ascending: false });
+
+      if (!error && data) {
+        const formatted = data.map(a => ({
+          id: a.id,
+          userId: a.user_id,
+          fullName: a.full_name,
+          phone: a.phone,
+          house: a.house,
+          street: a.street,
+          area: a.area,
+          city: a.city,
+          state: a.state,
+          pincode: a.pincode,
+          landmark: a.landmark,
+          isDefault: Boolean(a.is_default)
+        }));
+
+        const all = this.getAll();
+        const others = all.filter(a => a.userId !== userId);
+        const nextAll = [...formatted, ...others];
+        setStorageItem(ADDRESSES_KEY, nextAll);
+        return formatted;
+      }
+    } catch (err) {
+      console.warn('Supabase fetchUserAddresses error:', err);
+    }
+    return this.getUserAddresses(userId);
+  },
+
   addAddress(userId, addressData) {
     if (!userId) return { success: false, error: 'User must be authenticated' };
 
@@ -67,6 +111,37 @@ export const addressService = {
     updated = [...updated, newAddress];
     setStorageItem(ADDRESSES_KEY, updated);
 
+    // Sync to Supabase
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          if (newAddress.isDefault) {
+            await supabase
+              .from('addresses')
+              .update({ is_default: false })
+              .eq('user_id', userId);
+          }
+
+          await supabase.from('addresses').insert({
+            user_id: userId,
+            full_name: newAddress.fullName,
+            phone: newAddress.phone,
+            house: newAddress.house,
+            street: newAddress.street,
+            area: newAddress.area,
+            city: newAddress.city,
+            state: newAddress.state,
+            pincode: newAddress.pincode,
+            landmark: newAddress.landmark,
+            is_default: newAddress.isDefault
+          });
+        } catch (err) {
+          console.warn('Supabase addAddress error:', err);
+        }
+      })();
+    }
+
     return { success: true, address: newAddress };
   },
 
@@ -89,6 +164,41 @@ export const addressService = {
     }
 
     setStorageItem(ADDRESSES_KEY, updated);
+
+    // Sync to Supabase
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          if (addressData.isDefault) {
+            await supabase
+              .from('addresses')
+              .update({ is_default: false })
+              .eq('user_id', userId);
+          }
+
+          await supabase
+            .from('addresses')
+            .update({
+              full_name: addressData.fullName,
+              phone: addressData.phone,
+              house: addressData.house,
+              street: addressData.street,
+              area: addressData.area,
+              city: addressData.city,
+              state: addressData.state,
+              pincode: addressData.pincode,
+              landmark: addressData.landmark,
+              is_default: Boolean(addressData.isDefault),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', addressId);
+        } catch (err) {
+          console.warn('Supabase updateAddress error:', err);
+        }
+      })();
+    }
+
     return { success: true };
   },
 
@@ -97,7 +207,6 @@ export const addressService = {
     const target = all.find(a => a.id === addressId && a.userId === userId);
     const updated = all.filter(a => !(a.id === addressId && a.userId === userId));
 
-    // If the deleted address was default, set next address as default
     if (target?.isDefault) {
       const remainingUser = updated.filter(a => a.userId === userId);
       if (remainingUser.length > 0) {
@@ -106,18 +215,22 @@ export const addressService = {
     }
 
     setStorageItem(ADDRESSES_KEY, updated);
+
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      (async () => {
+        try {
+          await supabase.from('addresses').delete().eq('id', addressId);
+        } catch (err) {
+          console.warn('Supabase deleteAddress error:', err);
+        }
+      })();
+    }
+
     return { success: true };
   },
 
   setDefaultAddress(userId, addressId) {
-    const all = this.getAll();
-    const updated = all.map(a => {
-      if (a.userId === userId) {
-        return { ...a, isDefault: a.id === addressId };
-      }
-      return a;
-    });
-    setStorageItem(ADDRESSES_KEY, updated);
-    return { success: true };
+    return this.updateAddress(userId, addressId, { isDefault: true });
   }
 };

@@ -44,21 +44,24 @@ export const AuthModal = () => {
     setSuccessMessage('');
   };
 
-  const onLoginSubmit = (e) => {
+  const onLoginSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = handleLogin(email, password);
+    try {
+      const res = await handleLogin(email, password);
       setIsLoading(false);
-      if (!res.success) {
+      if (res && !res.success) {
         setErrorMessage(res.error || 'Failed to login');
       }
-    }, 400);
+    } catch (err) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Failed to login');
+    }
   };
 
-  const onSignupSubmit = (e) => {
+  const onSignupSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -68,35 +71,41 @@ export const AuthModal = () => {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const res = handleSignup({
+    try {
+      const res = await handleSignup({
         fullName,
         email,
         phone,
         password
       });
       setIsLoading(false);
-      if (!res.success) {
+      if (res && !res.success) {
         setErrorMessage(res.error || 'Failed to create account');
       }
-    }, 400);
+    } catch (err) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Failed to create account');
+    }
   };
 
-  const onForgotSubmit = (e) => {
+  const onForgotSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
+      const res = await authService.forgotPassword(email);
       setIsLoading(false);
-      const res = authService.forgotPassword(email);
-      if (res.success) {
+      if (res && res.success) {
         setSuccessMessage(res.message);
       } else {
-        setErrorMessage(res.error || 'Unable to process reset request.');
+        setErrorMessage(res?.error || 'Unable to process reset request.');
       }
-    }, 500);
+    } catch (err) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Unable to process reset request.');
+    }
   };
 
   return (

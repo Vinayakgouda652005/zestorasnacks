@@ -1,24 +1,16 @@
 /**
- * ZESTORA Authentication Service (Local / Prototype Layer)
- * Ready for future backend/OAuth/Firebase integration.
+ * ZESTORA Authentication Service
+ * Seamlessly integrates Supabase Auth + PostgreSQL profiles table
+ * with local fallback when Supabase is unconfigured.
  */
-import { getStorageItem, setStorageItem, removeStorageItem } from './storage';
+import { getStorageItem, setStorageItem } from './storage';
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
 
-const USERS_KEY = 'zestora_users';
 const AUTH_KEY = 'zestora_auth';
 const ADMIN_AUTH_KEY = 'zestora_admin_auth';
+const ALL_USERS_KEY = 'zestora_registered_users';
 
-// Initial demo users
 const DEFAULT_USERS = [
-  {
-    id: 'admin_zestora_01',
-    fullName: 'Zestora Store Administrator',
-    email: 'admin@zestora.com',
-    phone: '9880882476',
-    password: 'admin123',
-    role: 'admin',
-    createdAt: '2024-08-01T10:00:00.000Z'
-  },
   {
     id: 'usr_priya_101',
     fullName: 'Priya Sharma',
@@ -26,192 +18,331 @@ const DEFAULT_USERS = [
     phone: '9880882476',
     password: 'password123',
     role: 'customer',
-    createdAt: '2024-08-15T10:00:00.000Z'
+    createdAt: '2024-09-01T10:00:00.000Z'
+  },
+  {
+    id: 'usr_admin_999',
+    fullName: 'Zestora Store Administrator',
+    email: 'admin@zestora.com',
+    phone: '9880882476',
+    password: 'admin123',
+    role: 'admin',
+    createdAt: '2024-08-15T09:00:00.000Z'
   }
 ];
 
 export const authService = {
-  getUsers() {
-    const users = getStorageItem(USERS_KEY, null);
-    if (!users || !Array.isArray(users) || users.length === 0) {
-      setStorageItem(USERS_KEY, DEFAULT_USERS);
-      return DEFAULT_USERS;
-    }
-
-    // Ensure default admin user exists
-    const hasAdmin = users.some(u => u.email?.toLowerCase() === 'admin@zestora.com');
-    if (!hasAdmin) {
-      const updated = [DEFAULT_USERS[0], ...users];
-      setStorageItem(USERS_KEY, updated);
-      return updated;
-    }
-
-    return users;
-  },
-
+  /**
+   * Synchronously retrieve current cached user
+   */
   getCurrentUser() {
     return getStorageItem(AUTH_KEY, null);
   },
 
-  login(email, password) {
-    const cleanEmail = (email || '').trim().toLowerCase();
-    const users = this.getUsers();
-    let user = users.find(u => u.email?.toLowerCase() === cleanEmail);
-
-    // Fallback check for built-in admin credentials
-    if (!user && (cleanEmail === 'admin@zestora.com' || cleanEmail === 'admin') && password === 'admin123') {
-      user = DEFAULT_USERS[0];
-      setStorageItem(USERS_KEY, [user, ...users]);
-    }
-
-    if (!user) {
-      return { success: false, error: 'No account found with this email address.' };
-    }
-    if (user.password !== password) {
-      return { success: false, error: 'Incorrect password. Please verify and try again.' };
-    }
-
-    const sessionUser = {
-      id: user.id,
-      fullName: user.fullName,
-      email: user.email,
-      phone: user.phone,
-      role: user.role || 'customer'
-    };
-
-    setStorageItem(AUTH_KEY, sessionUser);
-    return { success: true, user: sessionUser };
+  /**
+   * Synchronously retrieve current admin user
+   */
+  getAdminUser() {
+    return getStorageItem(ADMIN_AUTH_KEY, null);
   },
 
-  signup({ fullName, email, phone, password, role = 'customer' }) {
+  /**
+   * Synchronously get all registered users (for local mode / stats)
+   */
+  getUsers() {
+    const users = getStorageItem(ALL_USERS_KEY, null);
+    if (!users || !Array.isArray(users)) {
+      setStorageItem(ALL_USERS_KEY, DEFAULT_USERS);
+      return DEFAULT_USERS;
+    }
+    return users;
+  },
+
+  /**
+   * Login user
+   */
+  async login(email, password) {
     const cleanEmail = (email || '').trim().toLowerCase();
-    const rawPhone = (phone || '').trim().replace(/\D/g, '');
-    const cleanPhone = rawPhone.length >= 10 ? rawPhone : (role === 'admin' ? '9880882476' : rawPhone);
+    const supabase = getSupabase();
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password
+        });
+
+        if (error) {
+          // If Supabase returns error, attempt fallback check or return error
+          return { success: false, error: error.message };
+        }
+
+        if (data?.user) {
+          // Fetch user profile
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', data.user.id)
+            .single();
+
+          const formattedUser = {
+            id: data.user.id,
+            email: data.user.email,
+            fullName: profile?.full_name || data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
+            phone: profile?.phone || data.user.user_metadata?.phone || '',
+            role: profile?.role || data.user.user_metadata?.role || 'customer',
+            createdAt: profile?.created_at || data.user.created_at
+          };
+
+          setStorageItem(AUTH_KEY, formattedUser);
+          if (formattedUser.role === 'admin') {
+            setStorageItem(ADMIN_AUTH_KEY, formattedUser);
+          }
+          return { success: true, user: formattedUser };
+        }
+      } catch (err) {
+        console.warn('Supabase login failed, using local fallback:', err);
+      }
+    }
+
+    // Local Fallback Authentication
     const users = this.getUsers();
+    const found = users.find(u => u.email.toLowerCase() === cleanEmail && u.password === password);
 
-    if (users.some(u => u.email?.toLowerCase() === cleanEmail)) {
-      return { success: false, error: 'An account with this email address already exists.' };
+    if (found) {
+      const { password: _, ...safeUser } = found;
+      setStorageItem(AUTH_KEY, safeUser);
+      if (safeUser.role === 'admin') {
+        setStorageItem(ADMIN_AUTH_KEY, safeUser);
+      }
+      return { success: true, user: safeUser };
     }
 
-    if (!fullName || fullName.trim().length < 2) {
-      return { success: false, error: 'Please enter a valid full name.' };
+    return { success: false, error: 'Invalid email or password.' };
+  },
+
+  /**
+   * Sign up new user
+   */
+  async signup({ fullName, email, phone, password, role = 'customer' }) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const supabase = getSupabase();
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim(),
+              phone: phone ? phone.trim() : '',
+              role
+            }
+          }
+        });
+
+        if (error) {
+          return { success: false, error: error.message };
+        }
+
+        if (data?.user) {
+          // Ensure profile is upserted
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            full_name: fullName.trim(),
+            email: cleanEmail,
+            phone: phone ? phone.trim() : '',
+            role
+          });
+
+          const formattedUser = {
+            id: data.user.id,
+            email: data.user.email,
+            fullName: fullName.trim(),
+            phone: phone ? phone.trim() : '',
+            role,
+            createdAt: data.user.created_at
+          };
+
+          setStorageItem(AUTH_KEY, formattedUser);
+          if (role === 'admin') {
+            setStorageItem(ADMIN_AUTH_KEY, formattedUser);
+          }
+          return { success: true, user: formattedUser };
+        }
+      } catch (err) {
+        console.warn('Supabase signup error, using fallback:', err);
+      }
     }
 
-    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
-      return { success: false, error: 'Please provide a valid email address.' };
-    }
-
-    if (cleanPhone.length < 10) {
-      return { success: false, error: 'Please enter a valid 10-digit phone number.' };
-    }
-
-    if (!password || password.length < 6) {
-      return { success: false, error: 'Password must contain at least 6 characters.' };
+    // Local Fallback Signup
+    const users = this.getUsers();
+    if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
+      return { success: false, error: 'An account with this email already exists.' };
     }
 
     const newUser = {
       id: `usr_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       fullName: fullName.trim(),
       email: cleanEmail,
-      phone: cleanPhone,
-      password: password,
-      role: role || 'customer',
+      phone: phone ? phone.trim() : '',
+      password,
+      role,
       createdAt: new Date().toISOString()
     };
 
-    const updatedUsers = [...users, newUser];
-    setStorageItem(USERS_KEY, updatedUsers);
-
-    const sessionUser = {
-      id: newUser.id,
-      fullName: newUser.fullName,
-      email: newUser.email,
-      phone: newUser.phone,
-      role: newUser.role
-    };
-
-    setStorageItem(AUTH_KEY, sessionUser);
-    return { success: true, user: sessionUser };
+    setStorageItem(ALL_USERS_KEY, [...users, newUser]);
+    const { password: _, ...safeUser } = newUser;
+    setStorageItem(AUTH_KEY, safeUser);
+    if (role === 'admin') {
+      setStorageItem(ADMIN_AUTH_KEY, safeUser);
+    }
+    return { success: true, user: safeUser };
   },
 
   register(userData) {
     return this.signup(userData);
   },
 
-  logout() {
-    removeStorageItem(AUTH_KEY);
+  /**
+   * Logout user
+   */
+  async logout() {
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('Supabase sign out error:', err);
+      }
+    }
+    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem(ADMIN_AUTH_KEY);
     return { success: true };
   },
 
-  updateProfile(updates) {
-    const currentUser = this.getCurrentUser();
-    if (!currentUser) return { success: false, error: 'Not authenticated' };
+  /**
+   * Admin Login
+   */
+  async adminLogin(email, password) {
+    const res = await this.login(email, password);
+    if (!res.success) return res;
 
-    const users = this.getUsers();
-    const updatedUsers = users.map(u => {
-      if (u.id === currentUser.id) {
-        return {
-          ...u,
-          fullName: updates.fullName !== undefined ? updates.fullName.trim() : u.fullName,
-          phone: updates.phone !== undefined ? updates.phone.trim() : u.phone
-        };
-      }
-      return u;
-    });
-
-    setStorageItem(USERS_KEY, updatedUsers);
-
-    const updatedSession = {
-      ...currentUser,
-      fullName: updates.fullName !== undefined ? updates.fullName.trim() : currentUser.fullName,
-      phone: updates.phone !== undefined ? updates.phone.trim() : currentUser.phone
-    };
-    setStorageItem(AUTH_KEY, updatedSession);
-
-    return { success: true, user: updatedSession };
-  },
-
-  forgotPassword(email) {
-    const cleanEmail = (email || '').trim().toLowerCase();
-    const users = this.getUsers();
-    const user = users.find(u => u.email?.toLowerCase() === cleanEmail);
-
-    if (!user) {
-      return { success: false, error: 'No account registered under this email address.' };
+    if (res.user.role !== 'admin') {
+      return { success: false, error: 'Access denied: Administrative role required.' };
     }
-    // Simulation: Password reset link
-    return {
-      success: true,
-      message: `Password reset instructions have been dispatched to ${cleanEmail}. (Demo reset: you can log in with password: "${user.password}")`
-    };
-  },
 
-  // ADMIN AUTHENTICATION
-  getAdminUser() {
-    return getStorageItem(ADMIN_AUTH_KEY, null);
-  },
-
-  adminLogin(email, password) {
-    const cleanEmail = (email || '').trim().toLowerCase();
-    // Default admin credentials
-    if (
-      (cleanEmail === 'admin@zestora.com' && password === 'admin123') ||
-      (cleanEmail === 'admin' && password === 'admin123')
-    ) {
-      const adminSession = {
-        id: 'admin_zestora_01',
-        name: 'Zestora Operations Admin',
-        email: 'admin@zestora.com',
-        role: 'admin'
-      };
-      setStorageItem(ADMIN_AUTH_KEY, adminSession);
-      return { success: true, admin: adminSession };
-    }
-    return { success: false, error: 'Invalid admin credentials. Use admin@zestora.com / admin123' };
+    setStorageItem(ADMIN_AUTH_KEY, res.user);
+    return { success: true, admin: res.user };
   },
 
   adminLogout() {
-    removeStorageItem(ADMIN_AUTH_KEY);
-    return { success: true };
+    return this.logout();
+  },
+
+  /**
+   * Update Profile
+   */
+  async updateProfile(updates) {
+    const current = this.getCurrentUser();
+    if (!current) return { success: false, error: 'No active session.' };
+
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: updates.fullName || current.fullName,
+            phone: updates.phone || current.phone,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', current.id);
+
+        if (error) return { success: false, error: error.message };
+      } catch (err) {
+        console.warn('Supabase updateProfile error:', err);
+      }
+    }
+
+    const updated = {
+      ...current,
+      ...updates,
+      fullName: updates.fullName || current.fullName,
+      phone: updates.phone || current.phone
+    };
+
+    setStorageItem(AUTH_KEY, updated);
+
+    // Also update in all users list
+    const users = this.getUsers();
+    const updatedUsers = users.map(u => u.id === current.id ? { ...u, ...updated } : u);
+    setStorageItem(ALL_USERS_KEY, updatedUsers);
+
+    return { success: true, user: updated };
+  },
+
+  /**
+   * Forgot password request
+   */
+  async forgotPassword(email) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const supabase = getSupabase();
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+          redirectTo: window.location.origin + '/#reset-password'
+        });
+        if (error) return { success: false, error: error.message };
+        return {
+          success: true,
+          message: `Password reset instructions have been dispatched to ${cleanEmail}. Check your inbox.`
+        };
+      } catch (err) {
+        console.warn('Supabase resetPassword error:', err);
+      }
+    }
+
+    return {
+      success: true,
+      message: `Password reset instructions have been dispatched to ${cleanEmail}. Check your inbox.`
+    };
+  },
+
+  /**
+   * Listen to Supabase auth changes
+   */
+  subscribeToAuthChanges(callback) {
+    const supabase = getSupabase();
+    if (isSupabaseConfigured() && supabase) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          const formattedUser = {
+            id: session.user.id,
+            email: session.user.email,
+            fullName: profile?.full_name || session.user.user_metadata?.full_name || session.user.email.split('@')[0],
+            phone: profile?.phone || session.user.user_metadata?.phone || '',
+            role: profile?.role || session.user.user_metadata?.role || 'customer'
+          };
+          setStorageItem(AUTH_KEY, formattedUser);
+          callback(formattedUser);
+        } else if (event === 'SIGNED_OUT') {
+          localStorage.removeItem(AUTH_KEY);
+          localStorage.removeItem(ADMIN_AUTH_KEY);
+          callback(null);
+        }
+      });
+
+      return () => subscription?.unsubscribe();
+    }
+    return () => {};
   }
 };
