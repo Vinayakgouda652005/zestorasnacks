@@ -51,7 +51,19 @@ import {
 } from '../lib/supabase';
 
 export const AdminPage = () => {
-  const { user, login, logout, showToast, navigateTo, products, refreshProducts, addProduct, updateProduct, deleteProduct } = useShop();
+  const { 
+    user, 
+    login, 
+    logout, 
+    showToast, 
+    navigateTo, 
+    products, 
+    refreshProducts, 
+    addProduct, 
+    updateProduct, 
+    deleteProduct,
+    handleAdminLogin: handleAdminLoginContext 
+  } = useShop();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [stats, setStats] = useState(() => adminService.getDashboardStats());
@@ -105,9 +117,10 @@ export const AdminPage = () => {
   });
 
   // Admin Login Credentials state for non-admin user
-  const [adminEmail, setAdminEmail] = useState('admin@zestora.com');
-  const [adminPassword, setAdminPassword] = useState('admin123');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [adminError, setAdminError] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
 
   // Database Tab State
   const [dbConfig, setDbConfig] = useState(() => getSupabaseConfig());
@@ -166,22 +179,27 @@ export const AdminPage = () => {
   };
 
   const refreshAllData = async () => {
+    let dbUsers = null;
     if (isSupabaseConfigured()) {
       try {
-        await Promise.allSettled([
+        const results = await Promise.allSettled([
           orderService.fetchFromDatabase(),
           reviewService.fetchFromDatabase(),
           contactService.fetchFromDatabase(),
           newsletterService.fetchFromDatabase(),
-          productService.fetchFromDatabase()
+          productService.fetchFromDatabase(),
+          authService.fetchUsersFromDatabase()
         ]);
+        if (results[5]?.status === 'fulfilled' && Array.isArray(results[5].value)) {
+          dbUsers = results[5].value;
+        }
       } catch (err) {
         console.warn('Error refreshing live data from Supabase:', err);
       }
     }
-    setStats(adminService.getDashboardStats());
+    setStats(adminService.getDashboardStats(dbUsers));
     setOrders(orderService.getAll());
-    setCustomers(adminService.getCustomersWithStats());
+    setCustomers(adminService.getCustomersWithStats(dbUsers));
     setReviews(reviewService.getAllReviewsList());
     setMessages(contactService.getMessages());
     setSubscribers(newsletterService.getAll());
@@ -192,32 +210,31 @@ export const AdminPage = () => {
     refreshAllData();
   }, []);
 
-  // Quick Admin Login
+  // Real Administrator Authentication via Supabase Auth
   const handleAdminLogin = async (e) => {
     e?.preventDefault();
     setAdminError('');
+    const email = (adminEmail || '').trim().toLowerCase();
+    const pass = adminPassword || '';
+
+    if (!email || !pass) {
+      setAdminError('Please enter both administrator email and password.');
+      return;
+    }
+
+    setAdminLoading(true);
     try {
-      const res = await login(adminEmail, adminPassword);
+      const res = await handleAdminLoginContext(email, pass);
       if (!res.success) {
-        // If user doesn't exist, create admin and login
-        const regRes = await authService.register({
-          fullName: 'Zestora Store Administrator',
-          email: adminEmail,
-          password: adminPassword,
-          phone: '9880882476',
-          role: 'admin'
-        });
-        if (regRes.success) {
-          await login(adminEmail, adminPassword);
-          showToast('Logged in as Zestora Administrator');
-        } else {
-          setAdminError(res.error || 'Invalid credentials');
-        }
+        setAdminError(res.error || 'Access denied: You do not have administrator permissions.');
       } else {
-        showToast('Welcome to Zestora Administration Console');
+        showToast('Welcome to Zestorasnacks Administration Console');
+        refreshAllData();
       }
     } catch (err) {
       setAdminError(err.message || 'Authentication error');
+    } finally {
+      setAdminLoading(false);
     }
   };
 
@@ -234,7 +251,7 @@ export const AdminPage = () => {
               Admin Portal
             </span>
             <h1 className="font-serif text-3xl text-[#193826]">
-              Zestora Operations
+              Zestorasnacks Operations
             </h1>
             <p className="text-xs text-[#193826]/70 leading-relaxed">
               Sign in with administrative privileges to manage fruit products, live orders, customer reviews, and inventory.
@@ -255,6 +272,7 @@ export const AdminPage = () => {
               <input
                 type="email"
                 required
+                placeholder="Enter administrator email"
                 value={adminEmail}
                 onChange={(e) => setAdminEmail(e.target.value)}
                 className="w-full bg-[#FFFFFF] border border-[#E8DDCD] px-3.5 py-2.5 text-xs text-[#193826] rounded-[2px] focus:outline-none focus:border-[#193826]"
@@ -268,6 +286,7 @@ export const AdminPage = () => {
               <input
                 type="password"
                 required
+                placeholder="Enter administrator password"
                 value={adminPassword}
                 onChange={(e) => setAdminPassword(e.target.value)}
                 className="w-full bg-[#FFFFFF] border border-[#E8DDCD] px-3.5 py-2.5 text-xs text-[#193826] rounded-[2px] focus:outline-none focus:border-[#193826]"
@@ -276,9 +295,10 @@ export const AdminPage = () => {
 
             <button
               type="submit"
-              className="w-full py-3 bg-[#193826] text-[#FBF8F2] text-xs uppercase tracking-widest font-semibold hover:bg-[#12291C] transition-all rounded-[2px]"
+              disabled={adminLoading}
+              className="w-full py-3 bg-[#193826] text-[#FBF8F2] text-xs uppercase tracking-widest font-semibold hover:bg-[#12291C] transition-all rounded-[2px] disabled:opacity-60"
             >
-              Sign In to Admin Console
+              {adminLoading ? 'Authenticating...' : 'Sign In to Admin Console'}
             </button>
           </form>
 
@@ -309,29 +329,43 @@ export const AdminPage = () => {
     }
   };
 
-  // Helper to resize and convert uploaded image file to lightweight Data URL or upload to Supabase Storage
+  // Helper to validate, process, and upload image files to Supabase Storage bucket 'product-images'
   const processImageFile = async (file) => {
-    if (!file) throw new Error('No file provided');
-    if (!file.type.startsWith('image/')) {
-      throw new Error('Only JPG, PNG, and WEBP image files are allowed.');
+    if (!file) throw new Error('No file selected.');
+
+    // 1. Validate file format (JPEG, PNG, WEBP)
+    const validMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    const validExtensions = /\.(jpe?g|png|webp)$/i;
+    const isMimeValid = validMimeTypes.includes(file.type);
+    const isExtValid = validExtensions.test(file.name || '');
+
+    if (!isMimeValid && !isExtValid) {
+      throw new Error('Unsupported format. Only JPG, PNG, and WEBP image files are permitted.');
     }
 
-    // Direct upload to Supabase Storage if configured
+    // 2. Validate file size (max 5MB)
+    const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 Megabytes
+    if (file.size > MAX_SIZE_BYTES) {
+      throw new Error('Image exceeds the 5MB size limit. Please upload a smaller image.');
+    }
+
+    // 3. Direct upload to Supabase Storage 'product-images' bucket
     if (isSupabaseConfigured()) {
       try {
         const publicUrl = await uploadProductImage(file);
         if (publicUrl) return publicUrl;
       } catch (err) {
-        console.warn('Supabase storage upload failed, falling back to local canvas optimization:', err);
+        console.error('Supabase Storage upload error:', err);
+        throw new Error(err.message || 'Failed to upload image to Supabase Storage.');
       }
     }
 
+    // Local fallback for offline demo/development mode
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          // Scale to max 600x600 for sharp retina display while keeping storage < 35KB
           const MAX_SIZE = 600;
           let { width, height } = img;
           if (width > height) {
@@ -352,11 +386,10 @@ export const AdminPage = () => {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
 
-          // Always compress to JPEG at 0.78 quality to guarantee tiny footprint (<35KB) and avoid quota issues
           const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
           resolve(dataUrl);
         };
-        img.onerror = () => reject(new Error('Failed to load image.'));
+        img.onerror = () => reject(new Error('Failed to parse uploaded image.'));
         img.src = event.target.result;
       };
       reader.onerror = () => reject(new Error('Failed to read image file.'));
@@ -609,7 +642,7 @@ export const AdminPage = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <span className="font-serif text-xl tracking-wider font-bold text-[#FBF8F2]">
-              ZESTORA
+              ZESTORASNACKS
             </span>
             <span className="text-[10px] uppercase tracking-[0.2em] bg-[#C5A869] text-[#193826] px-2 py-0.5 font-bold rounded-[2px]">
               Admin Operations

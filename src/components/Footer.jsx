@@ -15,7 +15,7 @@ export const Footer = () => {
       newsletterService.subscribe(email.trim(), 'Storefront Footer');
       setSubscribed(true);
       setEmail('');
-      showToast('Subscribed to Zestora Pantry updates!');
+      showToast('Subscribed to Zestorasnacks updates!');
       setTimeout(() => setSubscribed(false), 5000);
     }
   };
@@ -182,7 +182,7 @@ export const Footer = () => {
             {subscribed ? (
               <div className="bg-[#183424]/10 border border-[#183424]/20 p-2.5 text-xs text-[#193826] flex items-center space-x-2 rounded-[2px]">
                 <CheckCircle2 className="w-4 h-4 text-[#183424] shrink-0" />
-                <span>Thank you for subscribing to Zestora!</span>
+                <span>Thank you for subscribing to Zestorasnacks!</span>
               </div>
             ) : (
               <form onSubmit={handleSubscribe} className="flex items-stretch mt-3 max-w-sm">
@@ -211,7 +211,7 @@ export const Footer = () => {
         {/* Bottom Bar */}
         <div className="pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-[#193826]/65 gap-2">
           <div className="flex items-center gap-3">
-            <p>© 2024 Zestora. All rights reserved.</p>
+            <p>© 2024 Zestorasnacks. All rights reserved.</p>
             <span className="text-[#193826]/30">•</span>
             <button
               onClick={() => navigateTo('admin')}

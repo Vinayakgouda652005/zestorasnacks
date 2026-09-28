@@ -77,7 +77,7 @@ export const ContactPage = () => {
                   <MapPin className="w-5 h-5 text-[#C5A869] shrink-0 mt-0.5" />
                   <div>
                     <span className="font-semibold text-[#193826] block">Pantry & Packing Facility</span>
-                    <p>Zestora Foods Pvt. Ltd.</p>
+                    <p>Zestorasnacks</p>
                     <p>Indiranagar, Bangalore, Karnataka 560038, India</p>
                   </div>
                 </div>

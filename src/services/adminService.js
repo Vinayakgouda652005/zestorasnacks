@@ -8,10 +8,14 @@ import { reviewService } from './reviewService';
 import { contactService } from './contactService';
 
 export const adminService = {
-  getDashboardStats() {
+  getDashboardStats(providedUsers = null) {
     const orders = orderService.getAll();
     const products = productService.getProducts();
-    const users = authService.getUsers().filter(u => u.role !== 'admin');
+    let users = providedUsers || authService.getUsers().filter(u => u.role !== 'admin');
+    if (!users || users.length === 0) {
+      const uniqueEmails = new Set(orders.map(o => o.customer?.email?.toLowerCase()).filter(Boolean));
+      users = Array.from(uniqueEmails);
+    }
     const reviews = reviewService.getAllReviewsList();
     const messages = contactService.getMessages();
 
@@ -51,9 +55,27 @@ export const adminService = {
     };
   },
 
-  getCustomersWithStats() {
-    const users = authService.getUsers().filter(u => u.role !== 'admin');
+  getCustomersWithStats(providedUsers = null) {
+    let users = providedUsers || authService.getUsers().filter(u => u.role !== 'admin');
     const orders = orderService.getAll();
+
+    if (!users || users.length === 0) {
+      const customerMap = new Map();
+      orders.forEach(o => {
+        const email = o.customer?.email?.toLowerCase();
+        if (email && !customerMap.has(email)) {
+          customerMap.set(email, {
+            id: o.userId || `cust-${Math.abs(email.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0))}`,
+            fullName: o.customer?.fullName || email.split('@')[0],
+            email: email,
+            phone: o.customer?.phone || '',
+            role: 'customer',
+            createdAt: o.createdAt || o.date
+          });
+        }
+      });
+      users = Array.from(customerMap.values());
+    }
 
     return users.map(user => {
       const userOrders = orders.filter(o => o.userId === user.id || o.customer?.email?.toLowerCase() === user.email.toLowerCase());

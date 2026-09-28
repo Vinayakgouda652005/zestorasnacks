@@ -108,6 +108,38 @@ export const AuthModal = () => {
     }
   };
 
+  const onResetSubmit = async (e) => {
+    e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    if (password !== confirmPassword) {
+      setErrorMessage('Passwords do not match.');
+      return;
+    }
+    if (password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters long.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await authService.updatePassword(password);
+      setIsLoading(false);
+      if (res && res.success) {
+        setSuccessMessage('Your password has been updated successfully. Please sign in with your new password.');
+        setPassword('');
+        setConfirmPassword('');
+        setTimeout(() => setMode('login'), 2500);
+      } else {
+        setErrorMessage(res?.error || 'Failed to update password.');
+      }
+    } catch (err) {
+      setIsLoading(false);
+      setErrorMessage(err.message || 'Failed to update password.');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -131,17 +163,19 @@ export const AuthModal = () => {
         {/* Brand Header */}
         <div className="space-y-1 pb-4 border-b border-[#E8DDCD]">
           <span className="text-[11px] uppercase tracking-widest text-[#C5A869] font-medium">
-            Zestora Membership
+            Zestorasnacks Membership
           </span>
           <h2 className="font-serif text-2xl text-[#193826]">
             {mode === 'login' && 'Sign In to Your Account'}
             {mode === 'signup' && 'Create Your Account'}
             {mode === 'forgot' && 'Reset Your Password'}
+            {mode === 'reset' && 'Set New Password'}
           </h2>
           <p className="text-xs text-[#193826]/70">
             {mode === 'login' && 'Track orders, access saved addresses, and express checkout.'}
             {mode === 'signup' && 'Join the clean snacking community for seamless ordering.'}
             {mode === 'forgot' && 'Enter your email address to receive password recovery help.'}
+            {mode === 'reset' && 'Enter your new secure password for your account.'}
           </p>
         </div>
 
@@ -218,7 +252,7 @@ export const AuthModal = () => {
                   id="login-email"
                   type="email"
                   required
-                  placeholder="e.g. priya.sharma@example.com"
+                  placeholder="Enter your registered email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-[#FFFFFF] border border-[#E8DDCD] pl-9 pr-3 py-2.5 text-xs text-[#193826] placeholder-[#193826]/40 focus:outline-none focus:border-[#193826]"
@@ -264,21 +298,7 @@ export const AuthModal = () => {
               </div>
             </div>
 
-            {/* Quick Demo Credentials Hint */}
-            <div className="bg-[#F5EFEB] p-2.5 border border-[#E8DDCD] text-[11px] text-[#193826]/80 flex justify-between items-center">
-              <span>Demo Customer: <strong>priya.sharma@example.com</strong></span>
-              <button
-                type="button"
-                onClick={() => {
-                  setEmail('priya.sharma@example.com');
-                  setPassword('password123');
-                }}
-                className="text-[#193826] font-semibold underline hover:text-[#C5A869]"
-              >
-                Auto Fill
-              </button>
-            </div>
-
+            {/* Quick Login Submit */}
             <button
               id="auth-login-submit-btn"
               type="submit"
@@ -431,6 +451,79 @@ export const AuthModal = () => {
               className="w-full py-3 bg-[#193826] text-[#FBF8F2] text-xs uppercase tracking-widest font-semibold hover:bg-[#12291C] transition-all rounded-[2px] disabled:opacity-60"
             >
               {isLoading ? 'Sending...' : 'Send Reset Instructions'}
+            </button>
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('login');
+                  setErrorMessage('');
+                  setSuccessMessage('');
+                }}
+                className="text-xs text-[#193826] font-semibold underline hover:text-[#C5A869]"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ================= RESET PASSWORD (NEW PASSWORD) ================= */}
+        {mode === 'reset' && (
+          <form onSubmit={onResetSubmit} className="space-y-4 pt-4">
+            <div>
+              <label htmlFor="reset-new-password" className="block text-xs uppercase tracking-wider font-semibold text-[#193826] mb-1">
+                New Password *
+              </label>
+              <div className="relative">
+                <input
+                  id="reset-new-password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  placeholder="At least 6 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-[#FFFFFF] border border-[#E8DDCD] pl-9 pr-9 py-2.5 text-xs text-[#193826] placeholder-[#193826]/40 focus:outline-none focus:border-[#193826]"
+                />
+                <Lock className="w-4 h-4 text-[#193826]/40 absolute left-3 top-3" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-[#193826]/50 hover:text-[#193826]"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="reset-confirm-password" className="block text-xs uppercase tracking-wider font-semibold text-[#193826] mb-1">
+                Confirm New Password *
+              </label>
+              <div className="relative">
+                <input
+                  id="reset-confirm-password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  placeholder="Re-enter your new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full bg-[#FFFFFF] border border-[#E8DDCD] pl-9 pr-3 py-2.5 text-xs text-[#193826] placeholder-[#193826]/40 focus:outline-none focus:border-[#193826]"
+                />
+                <Lock className="w-4 h-4 text-[#193826]/40 absolute left-3 top-3" />
+              </div>
+            </div>
+
+            <button
+              id="auth-reset-submit-btn"
+              type="submit"
+              disabled={isLoading}
+              className="w-full py-3 bg-[#193826] text-[#FBF8F2] text-xs uppercase tracking-widest font-semibold hover:bg-[#12291C] transition-all rounded-[2px] disabled:opacity-60"
+            >
+              {isLoading ? 'Updating Password...' : 'Save New Password & Sign In'}
             </button>
 
             <div className="text-center pt-2">

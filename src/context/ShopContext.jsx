@@ -304,9 +304,30 @@ export const ShopProvider = ({ children }) => {
       });
     }
 
-    const unsubscribe = authService.subscribeToAuthChanges((updatedUser) => {
+    // Restore live session from Supabase on load
+    authService.getSessionUser().then(sessionUser => {
+      if (sessionUser) {
+        setUser(sessionUser);
+        if (sessionUser.role === 'admin') {
+          setAdminUser(sessionUser);
+        }
+      }
+    });
+
+    const unsubscribe = authService.subscribeToAuthChanges((updatedUser, event) => {
       if (updatedUser) {
         setUser(updatedUser);
+        if (updatedUser.role === 'admin') {
+          setAdminUser(updatedUser);
+        } else {
+          setAdminUser(null);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setAdminUser(null);
+      } else if (event === 'PASSWORD_RECOVERY') {
+        setIsAuthModalOpen(true);
+        setAuthModalMode('reset');
       }
     });
 
@@ -445,6 +466,7 @@ export const ShopProvider = ({ children }) => {
     const res = await authService.adminLogin(email, password);
     if (res.success) {
       setAdminUser(res.admin);
+      setUser(res.admin);
       showToast('Admin access granted.');
       navigateTo('admin', 'overview');
     }
@@ -454,6 +476,7 @@ export const ShopProvider = ({ children }) => {
   const handleAdminLogout = async () => {
     await authService.adminLogout();
     setAdminUser(null);
+    setUser(null);
     showToast('Admin logged out.');
     navigateTo('home');
   };
